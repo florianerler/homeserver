@@ -4,6 +4,9 @@ Jede Zeile beginnt mit einem Typ-Praefix, Felder sind durch Leerzeichen getrennt
 
     HELLO homeserver-agent <version>
     NET <uptime> <iface> <rx_bytes> <tx_bytes>
+    SYS <uptime> <ncpu> <l1> <l5> <l15> <memtotal_kB> <memavail_kB> <temp_C|->
+    BEGIN GUESTS <alter_s> / G <vmid> <qemu|lxc> <running|stopped|other> <name> / END GUESTS
+    MISSING GUESTS
 
 Unbekannte Typen werden ignoriert (neuere Agenten bleiben kompatibel), ungueltige
 Zeilen ergeben None. Die Zeilenlaenge ist begrenzt.
@@ -15,6 +18,8 @@ PROTOCOL_VERSION = 1
 AGENT_NAME = "homeserver-agent"
 MAX_LINE = 512
 IFACE_RE = re.compile(r"^[A-Za-z0-9._-]{1,15}$")
+NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
+MAX_GUESTS = 64
 MAX_GAP_S = 5.0     # groesserer Zeitsprung zwischen Zaehlerstaenden -> neu aufsetzen
 
 
@@ -66,7 +71,44 @@ def parse_line(line):
         if None in (up, rx, tx):
             return None
         return "NET", (up, parts[2], rx, tx)
+    if kind == "SYS":
+        return _parse_sys(parts)
+    if kind == "BEGIN":
+        if len(parts) == 3 and parts[1] == "GUESTS" and parts[2].isdigit():
+            return "BEGIN", ("GUESTS", int(parts[2]))
+        return None
+    if kind == "END":
+        return ("END", "GUESTS") if parts == ["END", "GUESTS"] else None
+    if kind == "MISSING":
+        return ("MISSING", "GUESTS") if parts == ["MISSING", "GUESTS"] else None
+    if kind == "G":
+        if len(parts) != 5 or not parts[1].isdigit() or not NAME_RE.match(parts[4]):
+            return None
+        vmid = int(parts[1])
+        if not 1 <= vmid <= 999999999 or parts[2] not in ("qemu", "lxc") \
+                or parts[3] not in ("running", "stopped", "other"):
+            return None
+        return "G", (vmid, parts[2], parts[3], parts[4])
     return None
+
+
+def _parse_sys(parts):
+    if len(parts) != 9 or not parts[2].isdigit() or not 1 <= int(parts[2]) <= 4096:
+        return None
+    up, l1, l5, l15, total, avail = (_number(p) for p in (parts[1], *parts[3:8]))
+    if None in (up, l1, l5, l15, total, avail) or total <= 0 or avail > total:
+        return None
+    if parts[8] == "-":
+        temp = None
+    else:
+        try:
+            temp = float(parts[8])
+        except ValueError:
+            return None
+        if not -50.0 < temp < 150.0:
+            return None
+    return "SYS", {"uptime": up, "ncpu": int(parts[2]), "load": (l1, l5, l15),
+                   "mem_total_kb": total, "mem_avail_kb": avail, "temp_c": temp}
 
 
 def is_legacy_counters(line):

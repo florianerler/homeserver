@@ -62,6 +62,52 @@ function parseSource(s) {
   return out
 }
 
+function str(v, max) { return String(v === undefined || v === null ? "" : v).slice(0, max) }
+
+// Systemkarte: Last, RAM, Temperatur, Uptime.
+function parseSystem(s, base) {
+  base.ncpu = Math.max(1, Math.min(4096, Math.floor(clean(s.ncpu)) || 1))
+  base.load = [0, 1, 2].map(function(i) { return Array.isArray(s.load) ? clean(s.load[i]) : 0 })
+  base.memTotalKb = clean(s.memTotalKb)
+  base.memAvailKb = Math.min(clean(s.memAvailKb), base.memTotalKb)
+  base.tempC = (typeof s.tempC === "number" && isFinite(s.tempC) && s.tempC > -50 && s.tempC < 150) ? s.tempC : null
+  base.uptime = clean(s.uptime)
+  return base
+}
+
+// Gaestekarte: Liste der VMs/Container (max. 64).
+function parseGuests(s, base) {
+  var items = []
+  if (Array.isArray(s.items)) {
+    for (var i = 0; i < s.items.length && items.length < 64; i++) {
+      var g = s.items[i]
+      if (!g || typeof g !== "object") continue
+      items.push({ vmid: Math.floor(clean(g.vmid)), type: g.type === "qemu" ? "qemu" : "lxc",
+                   status: (g.status === "running" || g.status === "stopped") ? g.status : "other",
+                   name: str(g.name, 32) })
+    }
+  }
+  base.items = items
+  base.running = items.filter(function(g) { return g.status === "running" }).length
+  base.total = items.length
+  return base
+}
+
+// "5 d 14 h", "3 h 07 min", "12 min": Uptime in Sekunden als kurzer Text.
+function uptimeText(sec) {
+  sec = Math.max(0, Math.floor(clean(sec)))
+  var d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60)
+  if (d > 0) return d + " d " + h + " h"
+  if (h > 0) return h + " h " + (m < 10 ? "0" : "") + m + " min"
+  return m + " min"
+}
+
+// Belegter RAM-Anteil 0..1 (aus total/verfuegbar).
+function memUsedFraction(total, avail) {
+  total = clean(total)
+  return total > 0 ? Math.max(0, Math.min(1, 1 - clean(avail) / total)) : 0
+}
+
 // Eine JSON-Zeile (Snapshot v2) des Streamers pruefen. Gibt null bei Muell zurueck.
 // -> { net: <Quelle>, qbt: <Quelle>, ... } fuer jede Karte in "cards" (max. 16).
 function parseSample(line) {
@@ -72,7 +118,11 @@ function parseSample(line) {
   var out = {}, n = 0
   for (var name in obj.cards) {
     if (++n > 16) break
-    if (/^[a-z]{1,16}$/.test(name)) out[name] = parseSource(obj.cards[name])
+    if (!/^[a-z]{1,16}$/.test(name)) continue
+    var base = parseSource(obj.cards[name]), raw = obj.cards[name] || {}
+    if (base.ok && name === "system") base = parseSystem(raw, base)
+    else if (base.ok && name === "guests") base = parseGuests(raw, base)
+    out[name] = base
   }
   return out
 }

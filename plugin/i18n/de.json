@@ -32,5 +32,18 @@
   "err.agent-protocol": "unerwartete Agent-Antwort",
   "err.iface-missing": "Schnittstelle auf dem Server nicht gefunden",
   "err.config-url": "qBittorrent-URL ungültig",
-  "err.config-ca": "CA-Datei nicht gefunden"
+  "err.config-ca": "CA-Datei nicht gefunden",
+  "system": "System",
+  "guests": "Gäste (VMs & Container)",
+  "sys.load": "Last",
+  "sys.ram": "RAM",
+  "sys.temp": "CPU-Temperatur",
+  "sys.uptime": "Laufzeit",
+  "sys.noTemp": "kein Sensor",
+  "guests.summary": "%1 von %2 laufen",
+  "guests.none": "keine Gäste",
+  "guest.running": "läuft",
+  "guest.stopped": "gestoppt",
+  "guest.other": "unbekannt",
+  "err.collector-offline": "Collector auf dem Server liefert nicht"
 }

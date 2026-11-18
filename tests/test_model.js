@@ -1,7 +1,7 @@
 // Test fuer plugin/Model.js:  node tests/test_model.js
 const fs = require("fs"), path = require("path"), assert = require("assert")
 const src = fs.readFileSync(path.join(__dirname, "..", "plugin", "Model.js"), "utf8").replace(/^\.pragma library$/m, "")
-const M = new Function(src + "; return { scale, format, push, peak, parseSample, summarize }")()
+const M = new Function(src + "; return { scale, format, push, peak, parseSample, summarize, uptimeText, memUsedFraction }")()
 const fmt = (v, d) => v.toFixed(d)
 
 assert.strictEqual(M.format(0, fmt), "0 B/s")
@@ -45,3 +45,26 @@ assert.strictEqual(M.summarize({ a: on, b: off }).kind, "someOffline")
 assert.strictEqual(M.summarize({ a: on, b: off }).offline, 1)
 assert.strictEqual(M.summarize({ a: on, b: off, c: off }).total, 3)
 console.log("Model.js: alle Tests ok")
+
+// ---- Phase 1: System- und Gaestekarte ----
+;(function () {
+  const line = JSON.stringify({ v: 2, cards: {
+    net: { ok: true, state: "online" }, qbt: { ok: false, state: "offline", error: "auth" },
+    system: { ok: true, state: "online", ncpu: 8, load: [0.5, 0.4, 0.3], memTotalKb: 16000000, memAvailKb: 4000000, tempC: 51.5, uptime: 90061 },
+    guests: { ok: true, state: "online", items: [
+      { vmid: 100, type: "lxc", status: "running", name: "pihole" },
+      { vmid: 200, type: "qemu", status: "weird", name: "x".repeat(99) }, "muell", null ] } } })
+  const s = M.parseSample(line)
+  assert.deepStrictEqual(s.system.load, [0.5, 0.4, 0.3]); assert.strictEqual(s.system.tempC, 51.5)
+  assert.strictEqual(s.guests.total, 2); assert.strictEqual(s.guests.running, 1)
+  assert.strictEqual(s.guests.items[1].status, "other"); assert.strictEqual(s.guests.items[1].name.length, 32)
+  const bad = M.parseSample(JSON.stringify({ v: 2, cards: { net: {}, qbt: {}, system: { ok: true, ncpu: -3, load: "x", memTotalKb: 10, memAvailKb: 99, tempC: 9999, uptime: -5 } } }))
+  assert.strictEqual(bad.system.ncpu, 1); assert.deepStrictEqual(bad.system.load, [0, 0, 0])
+  assert.strictEqual(bad.system.memAvailKb, 10); assert.strictEqual(bad.system.tempC, null); assert.strictEqual(bad.system.uptime, 0)
+  const off = M.parseSample(JSON.stringify({ v: 2, cards: { net: {}, qbt: {}, guests: { ok: false, state: "offline", error: "collector-offline", items: [{ vmid: 1 }] } } }))
+  assert.strictEqual(off.guests.items, undefined)
+  assert.strictEqual(M.uptimeText(90061), "1 d 1 h"); assert.strictEqual(M.uptimeText(3720), "1 h 02 min")
+  assert.strictEqual(M.uptimeText(59), "0 min"); assert.strictEqual(M.uptimeText(-1), "0 min")
+  assert.strictEqual(M.memUsedFraction(100, 25), 0.75); assert.strictEqual(M.memUsedFraction(0, 5), 0)
+  console.log("Model.js Phase 1: ok")
+})()

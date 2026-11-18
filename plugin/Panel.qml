@@ -23,8 +23,10 @@ Panel {
 
   property var net: ({ ok: false, state: "connecting", error: "connecting", rx: 0, tx: 0, ifaces: {} })
   property var qbt: ({ ok: false, state: "connecting", error: "connecting", rx: 0, tx: 0, ifaces: {} })
-  property var hostRxHistory: []
-  property var hostTxHistory: []
+  property var system: ({ ok: false, state: "connecting", error: "connecting" })
+  property var guests: ({ ok: false, state: "connecting", error: "connecting" })
+  property var netRxHistory: []
+  property var netTxHistory: []
   property var qbtRxHistory: []
   property var qbtTxHistory: []
 
@@ -35,9 +37,11 @@ Panel {
     if (!sample) return
     net = sample.net
     qbt = sample.qbt
+    if (sample.system) system = sample.system
+    if (sample.guests) guests = sample.guests
     // Offline-Zeitraeume als 0 im Verlauf, damit die Zeitachse weiterlaeuft.
-    hostRxHistory = Model.push(hostRxHistory, net.ok ? net.rx : 0, historyLength)
-    hostTxHistory = Model.push(hostTxHistory, net.ok ? net.tx : 0, historyLength)
+    netRxHistory = Model.push(netRxHistory, net.ok ? net.rx : 0, historyLength)
+    netTxHistory = Model.push(netTxHistory, net.ok ? net.tx : 0, historyLength)
     qbtRxHistory = Model.push(qbtRxHistory, qbt.ok ? qbt.rx : 0, historyLength)
     qbtTxHistory = Model.push(qbtTxHistory, qbt.ok ? qbt.tx : 0, historyLength)
   }
@@ -55,7 +59,7 @@ Panel {
   }
 
   // Gesamtstatus fuer die Kopfzeile (alle Karten).
-  readonly property var summary: Model.summarize({ net: net, qbt: qbt })
+  readonly property var summary: Model.summarize({ net: net, qbt: qbt, system: system, guests: guests })
   readonly property string summaryText: {
     var s = summary
     if (s.kind === "allOk") return strings.t("hero.allOk")
@@ -113,14 +117,23 @@ Panel {
     contentHeight: panel.fittedContentHeight(panel.loadedContentHeight, Style.space(560))
 
     content: PanelKeyCatcher {
-      implicitHeight: panelColumn.implicitHeight
+      implicitHeight: Math.min(panelColumn.implicitHeight, Style.space(560))
       anchors.fill: parent
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
+      Flickable {
+        id: scroller
+        anchors.fill: parent
+        clip: true
+        contentWidth: width
+        contentHeight: panelColumn.implicitHeight
+        boundsBehavior: Flickable.StopAtBounds
+        flickableDirection: Flickable.VerticalFlick
+
       Column {
         id: panelColumn
-        width: parent.width
+        width: scroller.width
         spacing: Style.space(14)
 
         // Kopf: Icon, Titel, Gesamtstatus
@@ -205,6 +218,25 @@ Panel {
           upLabel: strings.t("upload")
           peakText: strings.t("note.peak").arg(root.historyLength).arg(root.fmt(Model.peak(root.qbtRxHistory, root.qbtTxHistory)))
         }
+
+        PanelSeparator { width: parent.width }
+
+        SystemCard {
+          width: parent.width
+          data: root.system
+          tr: strings
+          statusText: root.statusOf(root.system)
+        }
+
+        PanelSeparator { width: parent.width }
+
+        GuestsCard {
+          width: parent.width
+          data: root.guests
+          tr: strings
+          statusText: root.statusOf(root.guests)
+        }
+      }
       }
     }
   }

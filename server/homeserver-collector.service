@@ -1,0 +1,29 @@
+[Unit]
+Description=Homeserver collector (root-eigen, feste Befehle, schreibt nach /run/homeserver)
+After=pve-cluster.service
+Wants=pve-cluster.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/lib/homeserver/collector.py
+# /run/homeserver gehoert root, ist fuer alle lesbar (der Agent liest dort).
+RuntimeDirectory=homeserver
+RuntimeDirectoryMode=0755
+Restart=on-failure
+RestartSec=5
+
+# Haertung: keine neuen Rechte, kein Zugriff auf Home-Verzeichnisse, Systemdateien schreibgeschuetzt.
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryMax=128M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

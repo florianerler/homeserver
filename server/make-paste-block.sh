@@ -10,7 +10,7 @@ KEY="$(tr -d '\n' < "$PUB")"
 
 echo "set -eu"
 echo "rm -rf /tmp/hs && mkdir -p /tmp/hs/server && cd /tmp/hs/server"
-for f in agent.py agent.conf.example install-server.sh; do
+for f in agent.py collector.py homeserver-collector.service agent.conf.example install-server.sh; do
   tag="HS_EOF_$(echo "$f" | tr -c 'A-Za-z0-9\n' '_')"
   grep -qx "$tag" "$DIR/$f" && { echo "Trennzeichen $tag kommt in $f vor" >&2; exit 1; }
   echo "cat > $f <<'$tag'"

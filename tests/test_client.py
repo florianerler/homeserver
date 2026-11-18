@@ -296,5 +296,98 @@ class AgentSourceIntegration(unittest.TestCase):
         self.assertFalse(src.send("a" * 200))
 
 
+def fake_stream(*lines, loops=40):
+    """Python-Code fuer ein Fake-Programm, das HELLO und dann die Zeilen wiederholt ausgibt."""
+    return ("import time\nprint('HELLO homeserver-agent 1', flush=True)\n"
+            f"L = {list(lines)!r}\nfor i in range({loops}):\n"
+            "    for l in L: print(l.replace('@', str(i + 1)), flush=True)\n    time.sleep(0.05)\n")
+
+
+GOOD_SYS = "SYS @.0 8 0.50 0.40 0.30 16000000 4000000 51.5"
+GOOD_GUESTS = ["BEGIN GUESTS 7", "G 100 lxc running pihole", "G 200 qemu stopped win11", "END GUESTS"]
+
+
+class ParseNewLines(unittest.TestCase):
+    def test_sys(self):
+        kind, d = protocol.parse_line("SYS 10.5 8 0.5 0.4 0.3 16000000 4000000 51.5")
+        self.assertEqual(kind, "SYS")
+        self.assertEqual(d["load"], (0.5, 0.4, 0.3)); self.assertEqual(d["temp_c"], 51.5)
+        self.assertIsNone(protocol.parse_line("SYS 10.5 8 0.5 0.4 0.3 16000000 4000000 -")[1]["temp_c"])
+
+    def test_sys_rejects_garbage(self):
+        for bad in ["SYS 1 8 0.5 0.4 0.3 100 200 50",          # frei > gesamt
+                    "SYS 1 0 0.5 0.4 0.3 100 50 50", "SYS 1 8 x 0.4 0.3 100 50 50",
+                    "SYS 1 8 0.5 0.4 0.3 100 50 999", "SYS 1 8 0.5 0.4 0.3 100 50", "SYS 1 8 -1 0.4 0.3 100 50 50"]:
+            self.assertIsNone(protocol.parse_line(bad), bad)
+
+    def test_guest_lines(self):
+        self.assertEqual(protocol.parse_line("G 100 lxc running pihole"), ("G", (100, "lxc", "running", "pihole")))
+        self.assertEqual(protocol.parse_line("BEGIN GUESTS 7"), ("BEGIN", ("GUESTS", 7)))
+        self.assertEqual(protocol.parse_line("END GUESTS"), ("END", "GUESTS"))
+        self.assertEqual(protocol.parse_line("MISSING GUESTS"), ("MISSING", "GUESTS"))
+        for bad in ["G 0 lxc running x", "G 1 evil running x", "G 1 lxc bogus x", "G 1 lxc running a;b",
+                    "G 1 lxc running", "BEGIN GUESTS x", "BEGIN OTHER 1", "END X"]:
+            self.assertIsNone(protocol.parse_line(bad), bad)
+
+
+class MultiCardIntegration(unittest.TestCase):
+    def run_fake(self, *lines, until, loops=40):
+        src = FakeAgentSource([sys.executable, "-c", fake_stream(*lines, loops=loops)])
+        try:
+            end = time.monotonic() + 6
+            src.start()
+            while time.monotonic() < end:
+                snaps = src.snapshots()
+                if until(snaps):
+                    return snaps
+                time.sleep(0.1)
+            return src.snapshots()
+        finally:
+            src.stop()
+
+    def test_system_and_guests_cards(self):
+        snaps = self.run_fake("NET @.0 lo @0 @0", GOOD_SYS, *GOOD_GUESTS,
+                              until=lambda s: s["system"]["ok"] and s["guests"]["ok"])
+        self.assertTrue(snaps["net"]["ok"], snaps["net"])
+        self.assertEqual(snaps["system"]["ncpu"], 8); self.assertEqual(snaps["system"]["tempC"], 51.5)
+        g = snaps["guests"]
+        self.assertEqual((g["running"], g["total"]), (1, 2))
+        self.assertEqual(g["items"][1]["name"], "win11")
+
+    def test_collector_missing_marks_only_guests_offline(self):
+        snaps = self.run_fake("NET @.0 lo @0 @0", GOOD_SYS, "MISSING GUESTS",
+                              until=lambda s: s["guests"].get("error") == "collector-offline" and s["system"]["ok"])
+        self.assertEqual(snaps["guests"]["error"], "collector-offline")
+        self.assertFalse(snaps["guests"]["ok"])
+        self.assertTrue(snaps["system"]["ok"] and snaps["net"]["ok"])      # Fehler bleibt lokal
+
+    def test_old_collector_file_is_offline(self):
+        snaps = self.run_fake("NET @.0 lo @0 @0", "BEGIN GUESTS 9999", "G 1 lxc running a", "END GUESTS",
+                              until=lambda s: s["guests"].get("error") == "collector-offline")
+        self.assertEqual(snaps["guests"]["error"], "collector-offline")
+
+    def test_incomplete_block_is_not_published(self):
+        snaps = self.run_fake("NET @.0 lo @0 @0", "BEGIN GUESTS 1", "G 1 lxc running a",
+                              until=lambda s: False, loops=15)
+        self.assertFalse(snaps["guests"]["ok"])
+
+    def test_connection_loss_takes_all_cards_offline(self):
+        src = FakeAgentSource([sys.executable, "-c", fake_stream("NET @.0 lo @0 @0", GOOD_SYS, *GOOD_GUESTS, loops=6)])
+        try:
+            src.start()
+            end = time.monotonic() + 6
+            while time.monotonic() < end and not src.snapshots()["system"]["ok"]:
+                time.sleep(0.05)
+            self.assertTrue(src.snapshots()["system"]["ok"])
+            end = time.monotonic() + 6
+            while time.monotonic() < end and src.snapshots()["system"]["ok"]:     # Fake-Agent endet nach 6 Takten
+                time.sleep(0.1)
+            snaps = src.snapshots()
+        finally:
+            src.stop()
+        self.assertFalse(snaps["system"]["ok"]); self.assertFalse(snaps["guests"]["ok"])
+        self.assertNotEqual(snaps["guests"]["state"], "online")
+
+
 if __name__ == "__main__":
     unittest.main()

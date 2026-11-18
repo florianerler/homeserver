@@ -8,7 +8,9 @@ einzeln aus, ohne die anderen zu stören.
 |---|---|---|
 | Proxmox-Host: Download / Upload | SSH-Agent, liest Zählerstände | ✅ |
 | qBittorrent: Download / Upload | WebUI-API `/api/v2/transfer/info` | ✅ |
-| System, Gäste, Ping, Speicher/SMART, Speedtest, Aktionen | siehe `server/` | geplant (Phasen 1–5) |
+| System: Last, RAM, CPU-Temperatur, Laufzeit | Agent liest `/proc`, `/sys` | ✅ |
+| Gäste: VMs und Container mit Status | Collector (`pvesh`) → Datei → Agent | ✅ |
+| Ping, Speicher/SMART, Speedtest, Aktionen | | geplant (Phasen 2–5) |
 
 - **Leiste:** nur das Server-Symbol (ausgegraut, wenn der Host offline ist).
 - **Tooltip:** die aktuellen Werte.
@@ -23,6 +25,8 @@ plugin/homeserver.py        Einstieg des Streamers (python3 -I), startet das Pak
 plugin/hs/                  Streamer: Protokoll, Config, SSH-Agent-Quelle, qBittorrent-Quelle (nur stdlib)
 plugin/*.qml, Model.js, i18n/   Oberfläche (Quickshell/QML), Texte de/en
 server/agent.py             Server-Agent (läuft als Benutzer traffic, per command= im SSH-Key)
+server/collector.py         root-eigener Dienst mit festen Befehlen, schreibt nach /run/homeserver/
+server/homeserver-collector.service   systemd-Unit (gehärtet) dazu
 server/agent.conf.example   Server-Konfiguration (welche Schnittstellen gesendet werden)
 server/install-server.sh    einmalig auf dem Proxmox-Host: Benutzer, Agent, Key-Bindung
 server/diagnose.sh          nur lesend: Fakten über den Server sammeln
@@ -44,7 +48,15 @@ ignoriert, ungültige Zeilen verworfen (max. 512 Zeichen).
 ```
 HELLO homeserver-agent 1                 Protokollversion, erste Zeile
 NET <uptime> <iface> <rx_bytes> <tx_bytes>     jede Sekunde, eine Zeile je konfigurierter Schnittstelle
+SYS <uptime> <ncpu> <l1> <l5> <l15> <mem_total_kB> <mem_avail_kB> <temp_C|->     alle 5 s
+BEGIN GUESTS <alter_s>                   alle 30 s, atomarer Block
+G <vmid> <qemu|lxc> <running|stopped|other> <name>
+END GUESTS                               (oder: MISSING GUESTS, wenn der Collector nichts liefert)
 ```
+
+Langsame Daten werden seltener gesendet als die Netzwerkzähler. Jede Karte hat ihre eigene
+Frische-Grenze und fällt einzeln aus: Fehlt der Collector, wird nur „Gäste" offline („Collector auf dem
+Server liefert nicht"), Netzwerk und System laufen weiter. Bricht die Verbindung ab, gehen alle Karten sofort offline.
 
 Der Client rechnet Raten selbst aus der **Server-Uptime**-Differenz (nicht aus der lokalen Uhr, damit
 Netzwerk-Jitter nichts verfälscht). Bei Zähler-Reset, rückwärts laufender Zeit oder großer Lücke wird
@@ -134,8 +146,11 @@ zusätzlicher (stark eingeschränkter) Zugang zum Host nötig. Ein Proxmox-API-T
   `agent.conf` und `authorized_keys` gehören root; der Benutzer `traffic` hat kein Passwort und keine Rechte.
 - Befehle an den Server nur über eine **feste Whitelist** im Agenten: exakte Namen, Argumente nur als
   harmlose Tokens, keine Shell-Auslegung, keine freien Argumente. Alles andere → `denied`.
-- Alles, was root braucht (ab Phase 1), erledigt ein eigener Dienst mit festen Befehlen ohne Eingabe von
-  außen. Es gibt kein sudo für den Benutzer `traffic`.
+- Alles, was root braucht, erledigt der **Collector** (`homeserver-collector.service`): feste Befehle ohne
+  Shell und mit Zeitlimit (aktuell nur `pvesh get /cluster/resources --type vm`), keine Eingabe von außen,
+  Ausgabe wird validiert und bereinigt (Gastnamen nur `A-Za-z0-9._-`), Ergebnis als Datei in `/run/homeserver/`
+  (root schreibt, alle lesen). Der Dienst ist per systemd gehärtet (`NoNewPrivileges`, `ProtectSystem`,
+  `ProtectHome`, Speicher-/Task-Limit). Es gibt kein sudo für den Benutzer `traffic`.
 - SSH mit `StrictHostKeyChecking=yes` und eigener `known_hosts`; Zugangsdaten nur in `config.ini` (600),
   nie im Code, nie im Repo (`.gitignore`). Secrets werden nie geloggt oder ausgegeben.
 - qBittorrent-Login per POST (URL-kodiert), kein Proxy, kurze Timeouts (2,5 s), Antworten größenbegrenzt.
@@ -182,6 +197,7 @@ python3 -I plugin/homeserver.py --count 5   # Streamer einzeln ansehen
 | `offline · Login abgelehnt` (SSH) | Key nicht in `authorized_keys`, oder Benutzer gesperrt (`usermod -p '*' traffic`) |
 | `offline · Server-Agent veraltet` | Server noch auf dem alten `traffic-counters.sh` → `install-server.sh` ausführen |
 | `offline · unerwartete Agent-Antwort` | Protokollversion passt nicht → Agent und Client auf denselben Stand bringen |
+| Gäste: `Collector auf dem Server liefert nicht` | `systemctl status homeserver-collector`, `journalctl -u homeserver-collector -n 20` auf dem Server |
 | `offline · Schnittstelle auf dem Server nicht gefunden` | `main_iface` fehlt in `/etc/homeserver/agent.conf` (`interfaces`) |
 | `offline · Login abgelehnt` (qBittorrent) | Benutzer/Passwort in `config.ini`; bei Dauerfehlern sperrt qBittorrent die IP zeitweise |
 | `offline · keine Antwort` | VPN aus? `ip route get <host>` prüfen |

@@ -32,5 +32,18 @@
   "err.agent-protocol": "unexpected agent reply",
   "err.iface-missing": "interface not found on server",
   "err.config-url": "invalid qBittorrent URL",
-  "err.config-ca": "CA file not found"
+  "err.config-ca": "CA file not found",
+  "system": "System",
+  "guests": "Guests (VMs & containers)",
+  "sys.load": "Load",
+  "sys.ram": "RAM",
+  "sys.temp": "CPU temperature",
+  "sys.uptime": "Uptime",
+  "sys.noTemp": "no sensor",
+  "guests.summary": "%1 of %2 running",
+  "guests.none": "no guests",
+  "guest.running": "running",
+  "guest.stopped": "stopped",
+  "guest.other": "unknown",
+  "err.collector-offline": "server collector not delivering"
 }

@@ -22,12 +22,10 @@ def main(argv=None):
 
     try:
         cfg = cfgmod.load_config(args.config)
-        net, qbt = AgentSource(cfg), QbtSource(cfg)
+        sources = (AgentSource(cfg), QbtSource(cfg))
     except cfgmod.ConfigError as e:
         print(f"homeserver: {e}", file=sys.stderr)
-        net, qbt = StaticFailure(str(e)), StaticFailure(str(e))
-
-    sources = (net, qbt)
+        sources = (StaticFailure(str(e), ("net", "system", "guests")), StaticFailure(str(e), ("qbt",)))
 
     def shutdown(*_):
         for s in sources:
@@ -42,7 +40,10 @@ def main(argv=None):
     emitted = 0
     try:
         while True:
-            snap = {"v": SNAPSHOT_VERSION, "cards": {"net": net.snapshot(), "qbt": qbt.snapshot()}}
+            cards = {}
+            for source in sources:
+                cards.update(source.snapshots())
+            snap = {"v": SNAPSHOT_VERSION, "cards": cards}
             print(json.dumps(snap, separators=(",", ":")), flush=True)
             emitted += 1
             if args.count and emitted >= args.count:
