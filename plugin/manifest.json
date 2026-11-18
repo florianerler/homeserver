@@ -3,7 +3,7 @@
   "id": "homeserver.traffic",
   "name": "Homeserver traffic",
   "version": "1.0.0",
-  "author": "operator",
+  "author": "Erler Florian",
   "license": "MIT",
   "description": "Live network rates of the Proxmox host (SSH counters) and qBittorrent (WebUI API).",
   "kinds": [

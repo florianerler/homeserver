@@ -147,3 +147,7 @@ python3 plugin/homeserver_traffic.py --count 5   # Streamer einzeln ansehen
 Streamer von Hand prüfen: `python3 plugin/homeserver_traffic.py --count 5`.
 Shell-Log: `quickshell log -p /usr/share/omarchy/shell | grep -i homeserver`.
 Danach `pgrep -a ssh`: pro Leiste darf es genau eine Verbindung geben.
+
+## Lizenz
+
+MIT, siehe [LICENSE](LICENSE).
