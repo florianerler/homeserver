@@ -159,6 +159,12 @@ Panel {
         boundsBehavior: Flickable.StopAtBounds
         flickableDirection: Flickable.VerticalFlick
 
+        // Beim Oeffnen immer oben beginnen (nicht dort, wo zuletzt gescrollt wurde).
+        Connections {
+          target: root
+          function onOpenedChanged() { if (root.opened) scroller.contentY = 0 }
+        }
+
       Column {
         id: panelColumn
         width: scroller.width

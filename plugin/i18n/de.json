@@ -68,7 +68,7 @@
   "speed.wait": "wieder möglich in %1",
   "speed.none": "noch keine Messung",
   "speed.last": "zuletzt vor %1",
-  "speed.avg": "Ø aus %1 Messungen (30 Tage): ↓ %2  ↑ %3  %4 ms",
+  "speed.avg": "Ø aus %1 Messungen: ↓ %2  ↑ %3  ·  %4 ms",
   "speed.failed": "letzter Lauf fehlgeschlagen",
   "speed.cmd.ok": "Messung angefordert",
   "speed.cmd.busy": "läuft bereits",

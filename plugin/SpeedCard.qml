@@ -42,7 +42,7 @@ Column {
         spacing: Style.space(2)
         Text {
           textFormat: Text.PlainText
-          text: card.last ? (card.tr.t("speed.last").arg(Model.ageText(card.last.age))) : (index === 0 ? card.tr.t("speed.none") : "")
+          text: index !== 0 ? " " : (card.last ? card.tr.t("speed.last").arg(Model.ageText(card.last.age)) : card.tr.t("speed.none"))
           color: Qt.darker(Commons.Color.foreground, 1.4)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
