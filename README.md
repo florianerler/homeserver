@@ -12,15 +12,17 @@ einzeln aus, ohne die anderen zu stören.
 | Gäste: VMs und Container mit Status | Collector (`pvesh`) → Datei → Agent | ✅ |
 | Internet: Ping-Latenz und Paketverlust zu 1.1.1.1 | Agent startet unprivilegiertes `ping` | ✅ |
 | Speicher: Füllstand je Storage (Warnung ab 85 %, kritisch ab 95 %) | Collector (`pvesm status`) | ✅ |
-| SMART: Gesundheit je Platte (nur Warnung bei „FEHLER“) | Collector (`smartctl`) | ✅ |
+| SMART: Gesundheit je Platte (Warnpunkt nur bei „FEHLER“; Standby wird nicht geweckt) | Collector (`smartctl`) | ✅ |
 | Speedtest auf dem Server: alle 3 h und per Klick, Verlauf 30 Tage | eigener Dienst als `hs-speedtest` | ✅ |
-| Aktionen (qBittorrent, Wake-on-LAN, VPN) | | geplant (Phase 5) |
+| Aktionen: qBittorrent Alt-Speed und Pause/Fortsetzen, Wake-on-LAN, WireGuard-Status | | geplant (Phase 5, siehe unten) |
 
 - **Leiste:** nur das Server-Symbol (ausgegraut, wenn der Host offline ist). Ein kleiner roter Punkt daneben warnt,
-  wenn etwas auffällt (aktuell: Ping-Verlust über 2 % oder Latenz über 100 ms).
-- **Tooltip:** die aktuellen Werte.
-- **Klick:** Popup (wie das WLAN-Panel) mit Live-Werten, 90-s-Verlauf, Status je Quelle samt Grund und
-  der zweiten Schnittstelle als Zusatzzeile. Schließen mit `Esc` oder Klick daneben.
+  wenn etwas auffällt: Ping-Verlust über 2 % oder Latenz über 100 ms, ein aktiver Speicher ab 85 % Füllstand oder
+  eine Platte mit SMART „FEHLER“. Karten, die offline sind, lösen keine Warnung aus (sie zeigen ihren Grund im Popup).
+- **Tooltip:** die aktuellen Werte von Proxmox-Host und qBittorrent.
+- **Klick:** Popup (wie das WLAN-Panel) mit einer Karte je Bereich: Status je Quelle samt Grund, Live-Werte,
+  Verläufe, bei Speedtest ein Knopf „Jetzt messen“. Das Popup ist höher als kleine Bildschirme und deshalb
+  scrollbar (Mausrad); es beginnt beim Öffnen immer oben. Schließen mit `Esc` oder Klick daneben.
 - Einheiten skalieren automatisch (B/s, kB/s, MB/s, GB/s; SI, 1 kB = 1000 B).
 
 ## Aufbau
@@ -28,10 +30,13 @@ einzeln aus, ohne die anderen zu stören.
 ```
 plugin/homeserver.py        Einstieg des Streamers (python3 -I), startet das Paket hs/
 plugin/hs/                  Streamer: Protokoll, Config, SSH-Agent-Quelle, qBittorrent-Quelle (nur stdlib)
-plugin/*.qml, Model.js, i18n/   Oberfläche (Quickshell/QML), Texte de/en
+plugin/*.qml, Model.js, i18n/   Oberfläche (Quickshell/QML): eine Karte je Datei, Texte de/en
 server/agent.py             Server-Agent (läuft als Benutzer traffic, per command= im SSH-Key)
 server/collector.py         root-eigener Dienst mit festen Befehlen, schreibt nach /run/homeserver/
 server/homeserver-collector.service   systemd-Unit (gehärtet) dazu
+server/speedtest-run.py     Speedtest-Runner (läuft als hs-speedtest), Verlauf und Zustand
+server/homeserver-speedtest.{service,timer,path}   Dienst, Zeitplan (3 h) und Klick-Trigger
+server/homeserver-tmpfiles.conf    Trigger-Verzeichnis und Speedtest-Datenverzeichnis
 server/agent.conf.example   Server-Konfiguration (welche Schnittstellen gesendet werden)
 server/install-server.sh    einmalig auf dem Proxmox-Host: Benutzer, Agent, Key-Bindung
 server/diagnose.sh          nur lesend: Fakten über den Server sammeln
@@ -81,7 +86,7 @@ beendet sich und damit die Sitzung, auch wenn der Client hart abgeschossen wird.
 Voraussetzungen: Omarchy 4.x, `python3`, `ssh` (alles ohnehin vorhanden).
 
 ```bash
-git clone https://github.com/florianerler/homeserver-traffic ~/Work/homeserver && cd ~/Work/homeserver
+git clone https://github.com/florianerler/homeserver ~/Work/homeserver && cd ~/Work/homeserver
 ./install.sh
 ```
 
@@ -115,10 +120,17 @@ Block zum Einfügen, der die Dateien per Heredoc anlegt und den Installer starte
 server/make-paste-block.sh ~/.config/homeserver/id_ed25519.pub | wl-copy    # dann in der Web-Shell einfügen
 ```
 
-Der Installer legt den Benutzer `traffic` an, installiert `/usr/local/lib/homeserver/agent.py`
-(root-eigen), schreibt `/etc/homeserver/agent.conf` (nur wenn sie fehlt) und bindet den Key mit
+Der Installer ist **wiederholbar** (jede neue Version wird mit demselben Befehl eingespielt). Er legt die Benutzer
+`traffic` (Agent) und `hs-speedtest` (Speedtest) an, installiert Agent, Collector und Runner nach
+`/usr/local/lib/homeserver/` (root-eigen), richtet die systemd-Units und das Trigger-Verzeichnis ein,
+schreibt `/etc/homeserver/agent.conf` (nur wenn sie fehlt) und bindet den Key mit
 `restrict,command="/usr/local/lib/homeserver/agent.py"` an den Agenten: kein Terminal, keine Weiterleitungen,
-nur dieses Programm. Er macht am Ende einen Selbsttest als `traffic` und zeigt den Host-Key-Fingerprint.
+nur dieses Programm. Am Ende zeigt er den Zustand von Collector (Gäste, Speicher, SMART), Speedtest-Programm und Ping,
+macht einen Selbsttest als `traffic` und gibt den Host-Key-Fingerprint aus.
+
+**Voraussetzungen auf dem Server** (der Installer installiert **keine** Pakete): Proxmox mit `pvesh`/`pvesm`,
+`python3`, `ping`; für die SMART-Karte `smartctl` (Paket `smartmontools`); für den Speedtest `speedtest-cli`
+oder die Ookla-CLI. Fehlt etwas, fällt nur die jeweilige Karte aus.
 
 **Ping-Ziel:** `ping_target = 1.1.1.1` in `/etc/homeserver/agent.conf`. Erlaubt ist nur eine IP-Adresse (kein Hostname, kein DNS);
 leer schaltet den Ping ab. Der Agent ruft ein festes `ping -n -c 3 -i 0.3 -W 1 <ip>` ohne Shell und ohne root auf.
@@ -153,7 +165,9 @@ gehärtet mit `ProtectSystem=strict`, `NoNewPrivileges`, `PrivateTmp`, Speicher-
 - **Verlauf:** `/var/lib/homeserver-speedtest/history.jsonl`, 30 Tage, höchstens 300 Messungen. Misslungene Läufe
   landen nicht im Verlauf, nur im Zustand („letzter Lauf fehlgeschlagen“).
 - **Programm:** wird vom Installer **nicht** installiert. Unterstützt werden das Debian-Paket `speedtest-cli`
-  (`apt install speedtest-cli`, aus der Distribution, keine Fremd-Quelle) und die Ookla-CLI `speedtest`. Fehlt beides,
+  (`apt install speedtest-cli`, aus der Distribution, keine Fremd-Quelle) und die Ookla-CLI `speedtest`. Der Runner
+  erkennt die Art über `<programm> --version`, denn `/usr/bin/speedtest` ist beim Debian-Paket ein eigenes Skript von
+  `speedtest-cli` und nicht die Ookla-CLI. Fehlt beides,
   sagt die Karte „Programm auf dem Server nicht installiert“. Beachte: Ein Test verbraucht je nach Anschluss einige
   hundert MB Datenvolumen; bei 8 Läufen am Tag also schnell mehrere GB im Monat.
 
@@ -190,6 +204,9 @@ zusätzlicher (stark eingeschränkter) Zugang zum Host nötig. Ein Proxmox-API-T
   nie im Code, nie im Repo (`.gitignore`). Secrets werden nie geloggt oder ausgegeben.
 - qBittorrent-Login per POST (URL-kodiert), kein Proxy, kurze Timeouts (2,5 s), Antworten größenbegrenzt.
   Bei `https://` wird das Zertifikat **immer** geprüft; `ca_file` vertraut gezielt einer eigenen CA.
+- Der Speedtest-Dienst läuft als eigener Systembenutzer ohne Login und Shell, `ProtectSystem=strict`; der einzige
+  Root-Schritt ist das Entfernen der Trigger-Datei (`ExecStartPre=+`). Das Trigger-Verzeichnis gehört `traffic` (0700).
+  Die Oberfläche kann dem Streamer nur das Wort `speedtest` schicken; der Streamer filtert, der Agent prüft erneut.
 - Alle angezeigten Texte sind `Text.PlainText`; Zahlen werden validiert (nur endliche Werte ≥ 0).
 - Keine Ports nach außen; Zugriff nur über LAN/VPN.
 
@@ -209,6 +226,18 @@ setzen. Die TLS-Prüfung wird nie abgeschaltet; ein fehlender oder kaputter `ca_
   eigene SSH-Verbindung. Beim Laptop allein ist es genau eine.
 - Verifiziert wurde der Weg über das WireGuard-VPN; derselbe Pfad im Heim-LAN hängt nur an der Adresse in `host =`.
 
+- **Datenvolumen:** Ein Speedtest verbraucht je nach Anschluss einige hundert MB; bei 8 Läufen am Tag also mehrere GB im Monat.
+- **SMART und Standby:** Eine Platte im Standby wird nicht geweckt und zeigt „Standby (nicht geweckt)“, bis sie von selbst aufwacht.
+- **Kleine Bildschirme:** Das Popup ist höher als der Bildschirm und wird gescrollt.
+
+## Geplant (Phase 5: Aktionen)
+
+- **qBittorrent:** Alt-Speed-Limits ein/aus und „alle pausieren / fortsetzen“ (API-Version wird erkannt:
+  5.x `stop/start`, 4.x `pause/resume`).
+- **Wake-on-LAN:** Gaming-PC wecken. Die MAC-Adresse steht **nur serverseitig** in `agent.conf` mit einem Alias;
+  der Client sendet nur `wol <alias>` (kein freies Argument, keine MAC vom Client).
+- **WireGuard-Status:** Route zum Host prüfen und ob die Schnittstelle vom Typ `wireguard` ist.
+
 ## Update-Festigkeit
 
 Das Plugin liegt in `~/.config/omarchy/plugins/` und wird von `omarchy update` nicht angefasst. Verloren gehen
@@ -218,8 +247,9 @@ Der `post-update`-Hook setzt ihn nach Updates zurück; nach einem manuellen Refr
 ## Tests
 
 ```bash
-python3 -I -m unittest discover -s tests    # Protokoll, Rate, Fehler, Config, Backoff, Agent, Integration
-node tests/test_model.js                    # Einheiten, Verlauf, Datenformat, Kopfzeilen-Status
+python3 -W error::ResourceWarning -I -m unittest discover -s tests   # 140+ Tests: Protokoll, Rate, Fehler, Config, Backoff,
+                                            # Agent, Collector (feindliche Eingaben), Speedtest-Runner, Units, Integration
+node tests/test_model.js                    # Einheiten, Verlauf, Datenformat, Warnungen, Kopfzeilen-Status
 bash tests/test_install.sh                  # Installer in einer Sandbox (Migration, fehlende shell.json)
 python3 -I plugin/homeserver.py --count 5   # Streamer einzeln ansehen
 ```
@@ -235,7 +265,8 @@ python3 -I plugin/homeserver.py --count 5   # Streamer einzeln ansehen
 | Gäste: `Collector auf dem Server liefert nicht` | `systemctl status homeserver-collector`, `journalctl -u homeserver-collector -n 20` auf dem Server |
 | Speicher/SMART: `Collector auf dem Server liefert nicht` | `journalctl -u homeserver-collector`; `smartctl` installiert? (`apt install smartmontools`, nur auf Wunsch) |
 | Speedtest: `Programm auf dem Server nicht installiert` | `apt install speedtest-cli` (nur wenn gewünscht), danach `systemctl start homeserver-speedtest` |
-| Speedtest: Knopf bleibt grau | läuft gerade oder Mindestabstand 10 min; `journalctl -u homeserver-speedtest -n 20` |
+| Speedtest: Knopf bleibt grau | läuft gerade oder Mindestabstand (10 min, nach Fehler 1 min); `journalctl -u homeserver-speedtest -n 20` |
+| Speedtest: Journal zeigt `Fehler: …` | Typ und letzte Fehlerzeile des Programms; zum Gegenprüfen: `runuser -u hs-speedtest -- speedtest-cli --simple` |
 | Internet: `ping auf dem Server nicht nutzbar` | als `traffic` testen: `su -s /bin/sh traffic -c 'ping -c1 1.1.1.1'` (Rechte/`ping_group_range`) |
 | `offline · Schnittstelle auf dem Server nicht gefunden` | `main_iface` fehlt in `/etc/homeserver/agent.conf` (`interfaces`) |
 | `offline · Login abgelehnt` (qBittorrent) | Benutzer/Passwort in `config.ini`; bei Dauerfehlern sperrt qBittorrent die IP zeitweise |
