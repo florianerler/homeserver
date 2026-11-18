@@ -1,4 +1,4 @@
-import io, json, os, sys, tempfile, threading, unittest
+import io, json, os, sys, tempfile, threading, time, unittest
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 sys.path.insert(0, os.path.join(ROOT, "server"))
 import agent
@@ -187,6 +187,131 @@ class Schedule(unittest.TestCase):
         self.assertTrue(all("NET" in k for k in kinds))                     # jede Sekunde
         self.assertEqual([i for i, k in enumerate(kinds) if "SYS" in k], [0, 5, 10])
         self.assertEqual([i for i, k in enumerate(kinds) if "BEGIN" in k or "MISSING" in k], [0, 10])
+
+
+GOOD_PING = """PING 8.8.8.8 (8.8.8.8) 56(84) bytes of data.
+64 bytes from 8.8.8.8: icmp_seq=1 ttl=117 time=12.1 ms
+
+--- 8.8.8.8 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 602ms
+rtt min/avg/max/mdev = 11.000/12.345/14.000/1.200 ms
+"""
+LOST_PING = """--- 1.1.1.1 ping statistics ---
+3 packets transmitted, 0 received, 100% packet loss, time 2050ms
+"""
+
+
+class PingParsing(unittest.TestCase):
+    def test_good_and_lost(self):
+        self.assertEqual(agent.parse_ping(GOOD_PING), (3, 3, 12.345))
+        self.assertEqual(agent.parse_ping(LOST_PING), (3, 0, None))
+        self.assertEqual(agent.ping_line(5.0, "1.1.1.1", (3, 2, 12.0)), "PING 5.00 1.1.1.1 3 2 12.00")
+        self.assertEqual(agent.ping_line(5.0, "1.1.1.1", (3, 0, None)), "PING 5.00 1.1.1.1 3 0 -")
+
+    def test_garbage(self):
+        for bad in ["", "ping: socket: Operation not permitted", "3 packets transmitted, 9 received",
+                    "0 packets transmitted, 0 received"]:
+            self.assertIsNone(agent.parse_ping(bad), bad)
+
+    def test_target_only_ip_literals(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            def conf(v):
+                p = os.path.join(tmp, "c.ini")
+                write(p, f"[agent]\nping_target = {v}\n")
+                return agent.load_ping_target(p)
+            self.assertEqual(conf("9.9.9.9"), "9.9.9.9")
+            self.assertEqual(conf("2606:4700:4700::1111"), "2606:4700:4700::1111")
+            self.assertIsNone(conf(""))                                  # aus
+            self.assertIsNone(conf("example.com"))                       # kein DNS
+            self.assertIsNone(conf("1.1.1.1; reboot"))
+            self.assertIsNone(conf("-f"))                                # keine Option einschleusen
+            self.assertEqual(agent.load_ping_target(os.path.join(tmp, "fehlt")), "1.1.1.1")   # Standard
+
+
+class FakeProc:
+    def __init__(self, text, rc=0, finish_after=1):
+        self.text, self.rc, self.polls, self.finish_after, self.killed = text, rc, 0, finish_after, False
+
+    def poll(self):
+        self.polls += 1
+        return self.rc if self.polls > self.finish_after else None
+
+    def communicate(self, timeout=None):
+        return (self.text, None)
+
+    def kill(self):
+        self.killed = True
+        self.finish_after = 0
+
+
+class PingerTests(unittest.TestCase):
+    def pinger(self, proc, **kw):
+        calls = []
+
+        def popen(argv, **kwargs):
+            calls.append((argv, kwargs))
+            if isinstance(proc, Exception):
+                raise proc
+            return proc
+        p = agent.Pinger("1.1.1.1", popen=popen, path="/usr/bin/ping", **kw)
+        return p, calls
+
+    def test_fixed_argv_no_shell(self):
+        p, calls = self.pinger(FakeProc(GOOD_PING))
+        p.step(100.0, 1.0)
+        argv, kwargs = calls[0]
+        self.assertEqual(argv, ["/usr/bin/ping", "-n", "-c", "3", "-i", "0.3", "-W", "1", "1.1.1.1"])
+        self.assertNotIn("shell", kwargs)
+        self.assertEqual(kwargs["env"]["LANG"], "C")
+
+    def test_result_line_and_interval(self):
+        p, calls = self.pinger(FakeProc(GOOD_PING))
+        self.assertIsNone(p.step(100.0, 7.0))                        # gestartet
+        self.assertIsNone(p.step(100.1, 7.1))                        # laeuft noch
+        self.assertEqual(p.step(100.2, 7.2), "PING 7.20 1.1.1.1 3 3 12.35")
+        self.assertIsNone(p.step(102.0, 9.0))                        # Abstand noch nicht erreicht
+        self.assertEqual(len(calls), 1)
+        p.step(105.1, 12.0)
+        self.assertEqual(len(calls), 2)                              # naechste Messung nach 5 s
+
+    def test_timeout_kills(self):
+        proc = FakeProc("", finish_after=10 ** 6)
+        p, _ = self.pinger(proc, timeout=8.0)
+        p.step(100.0, 1.0)
+        self.assertIsNone(p.step(105.0, 2.0))
+        self.assertEqual(p.step(109.0, 3.0), "PINGERR failed")
+        self.assertTrue(proc.killed)
+        self.assertFalse(p.busy)
+
+    def test_errors(self):
+        p, _ = self.pinger(OSError("kein ping"))
+        self.assertEqual(p.step(100.0, 1.0), "PINGERR unavailable")
+        p, _ = self.pinger(FakeProc("ping: socket: Operation not permitted\n", rc=2, finish_after=0))
+        p.step(100.0, 1.0)
+        self.assertEqual(p.step(100.1, 1.1), "PINGERR unavailable")
+        p, _ = self.pinger(FakeProc("irgendwas\n", rc=2, finish_after=0))
+        p.step(100.0, 1.0)
+        self.assertEqual(p.step(100.1, 1.1), "PINGERR failed")
+        p = agent.Pinger("1.1.1.1", path=None)
+        p.path = None
+        self.assertEqual(p.step(0.0, 1.0), "PINGERR unavailable")
+
+    def test_disabled_target_is_silent(self):
+        self.assertIsNone(agent.Pinger(None).step(100.0, 1.0))
+
+    def test_run_loop_emits_ping_and_cleans_up(self):
+        proc = FakeProc(GOOD_PING)
+        p, _ = self.pinger(proc)
+        r, w = os.pipe()
+        out = io.StringIO()
+        t = threading.Thread(target=lambda: (time.sleep(1.2), os.close(w)))
+        t.start()
+        try:
+            self.assertEqual(agent.run([], out, r, interval=0.2, pinger=p), 0)
+        finally:
+            t.join()
+            os.close(r)
+        self.assertRegex(out.getvalue(), r"PING \d+\.\d+ 1\.1\.1\.1 3 3 12\.35")
 
 
 class Commands(unittest.TestCase):

@@ -15,12 +15,17 @@ Zeilen (Server -> Client):
   SYS <uptime> <ncpu> <l1> <l5> <l15> <memtotal_kB> <memavail_kB> <temp_C|->   alle 5 s
   BEGIN GUESTS <alter_s> / G <vmid> <qemu|lxc> <running|stopped|other> <name> / END GUESTS   alle 30 s
   MISSING GUESTS                                                  wenn der Collector keine Datei liefert
+  PING <uptime> <ziel-ip> <gesendet> <empfangen> <avg_ms|->       alle 5 s (unprivilegiertes ping, 3 Pakete)
+  PINGERR <unavailable|failed>                                    ping nicht nutzbar
 """
 import argparse
+import ipaddress
 import configparser
 import json
 import os
 import re
+import shutil
+import subprocess
 import select
 import sys
 import time
@@ -44,6 +49,13 @@ GUESTS_EVERY = 30           # Takte zwischen Gaeste-Bloecken
 MAX_GUESTS = 64
 MAX_FILE_BYTES = 65536
 NAME_RE = re.compile(r"[^A-Za-z0-9._-]")
+PING_DEFAULT_TARGET = "1.1.1.1"
+PING_EVERY_S = 5.0
+PING_TIMEOUT_S = 8.0
+PING_COUNT = 3
+PING_PATHS = ("/usr/bin/ping", "/bin/ping")
+PING_SUMMARY_RE = re.compile(r"(\d+) packets transmitted, (\d+) (?:packets )?received")
+PING_RTT_RE = re.compile(r"= [\d.]+/([\d.]+)/[\d.]+")
 
 # Befehls-Whitelist: Name -> Funktion(argumente) -> Ergebnis-Code.
 # Phase 0: noch keine Befehle. Spaetere Phasen tragen hier ihre festen Befehle ein.
@@ -202,6 +214,107 @@ def guests_lines(result):
     return ([f"BEGIN GUESTS {age}"] + [f"G {v} {k} {st} {n}" for v, k, st, n in items] + ["END GUESTS"])
 
 
+def load_ping_target(path=CONF):
+    """Ping-Ziel aus der Config: nur IP-Literale (kein DNS, keine Argument-Einschleusung).
+    Leer = Ping aus (None)."""
+    cp = configparser.ConfigParser(interpolation=None)
+    cp.read(path)
+    raw = cp.get("agent", "ping_target", fallback=PING_DEFAULT_TARGET).strip()
+    if not raw:
+        return None
+    try:
+        return str(ipaddress.ip_address(raw))
+    except ValueError:
+        return None
+
+
+def parse_ping(text):
+    """Ausgabe von ping -> (gesendet, empfangen, avg_ms|None) oder None."""
+    m = PING_SUMMARY_RE.search(text)
+    if not m:
+        return None
+    sent, recv = int(m.group(1)), int(m.group(2))
+    if not 0 < sent <= 100 or recv > sent:
+        return None
+    avg = None
+    r = PING_RTT_RE.search(text)
+    if r and recv > 0:
+        avg = float(r.group(1))
+        if not 0 <= avg < 100000:
+            return None
+    return sent, recv, avg
+
+
+def ping_line(uptime, target, result):
+    sent, recv, avg = result
+    return f"PING {uptime:.2f} {target} {sent} {recv} {'-' if avg is None else f'{avg:.2f}'}"
+
+
+class Pinger:
+    """Startet alle PING_EVERY_S s ein kurzes ping (nicht blockierend, damit die Netz-Zaehler
+    weiter jede Sekunde kommen). Festes Programm, feste Argumente, IP-Literal als Ziel, keine Shell."""
+
+    def __init__(self, target, popen=subprocess.Popen, every=PING_EVERY_S, timeout=PING_TIMEOUT_S, path=None):
+        self.target = target
+        self.popen = popen
+        self.every = every
+        self.timeout = timeout
+        self.path = path or next((p for p in PING_PATHS if os.access(p, os.X_OK)), shutil.which("ping"))
+        self.proc = None
+        self.started = 0.0
+        self.next_start = 0.0
+
+    def argv(self):
+        return [self.path, "-n", "-c", str(PING_COUNT), "-i", "0.3", "-W", "1", self.target]
+
+    def step(self, now, uptime):
+        """Gibt eine Zeile zurueck, wenn ein Ergebnis vorliegt, sonst None."""
+        if self.target is None:
+            return None
+        if self.proc is None:
+            if now < self.next_start:
+                return None
+            self.next_start = now + self.every
+            if not self.path:
+                return "PINGERR unavailable"
+            try:
+                self.proc = self.popen(self.argv(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT, text=True, env={"PATH": "/usr/bin:/bin", "LANG": "C"})
+            except OSError:
+                return "PINGERR unavailable"
+            self.started = now
+            return None
+        if self.proc.poll() is None:
+            if now - self.started > self.timeout:
+                self.proc.kill()
+                self._reap()
+                return "PINGERR failed"
+            return None
+        text = self._reap()
+        result = parse_ping(text)
+        if result:
+            return ping_line(uptime, self.target, result)
+        return "PINGERR unavailable" if "not permitted" in text or "denied" in text else "PINGERR failed"
+
+    def _reap(self):
+        proc, self.proc = self.proc, None
+        try:
+            text = proc.communicate(timeout=2)[0] or ""
+        except (subprocess.SubprocessError, OSError):
+            proc.kill()
+            text = ""
+        return text[:4096]
+
+    def close(self):
+        if self.proc is not None:
+            self.proc.kill()
+            self._reap()
+
+    @property
+    def busy(self):
+        return self.proc is not None
+
+
 def handle_command(line):
     """Eine Befehlszeile pruefen. Immer eine CMDRESULT-Zeile als Antwort.
 
@@ -230,8 +343,16 @@ def tick_lines(ifaces, tick, sys_every=SYS_EVERY, guests_every=GUESTS_EVERY):
     return lines
 
 
-def run(ifaces, out, in_fd, interval=1.0, once=False, sys_every=SYS_EVERY, guests_every=GUESTS_EVERY):
+def run(ifaces, out, in_fd, interval=1.0, once=False, sys_every=SYS_EVERY, guests_every=GUESTS_EVERY, pinger=None):
     """Hauptschleife. Gibt 0 zurueck, wenn der Client weg ist."""
+    try:
+        return _run(ifaces, out, in_fd, interval, once, sys_every, guests_every, pinger)
+    finally:
+        if pinger:
+            pinger.close()
+
+
+def _run(ifaces, out, in_fd, interval, once, sys_every, guests_every, pinger):
     out.write(f"HELLO homeserver-agent {PROTOCOL}\n")
     out.flush()
     buf = b""
@@ -254,7 +375,20 @@ def run(ifaces, out, in_fd, interval=1.0, once=False, sys_every=SYS_EVERY, guest
             next_tick += interval
             if next_tick < now:
                 next_tick = now + interval
-        ready, _, _ = select.select([in_fd], [], [], max(0.0, next_tick - time.monotonic()))
+        if pinger:
+            try:
+                line = pinger.step(time.monotonic(), read_uptime())
+                if line:
+                    out.write(line + "\n")
+                    out.flush()
+            except BrokenPipeError:
+                return 0
+            except OSError:
+                pass
+        wait = max(0.0, next_tick - time.monotonic())
+        if pinger and pinger.busy:
+            wait = min(wait, 0.2)                    # laufendes ping regelmaessig abfragen
+        ready, _, _ = select.select([in_fd], [], [], wait)
         if not ready:
             continue
         chunk = os.read(in_fd, 4096)
@@ -281,7 +415,9 @@ def main(argv=None):
     args = ap.parse_args(argv)
     ifaces = load_interfaces(args.conf)
     try:
-        return run(ifaces, sys.stdout, sys.stdin.fileno(), once=args.once)
+        target = load_ping_target(args.conf)
+        pinger = Pinger(target) if target and not args.once else None
+        return run(ifaces, sys.stdout, sys.stdin.fileno(), once=args.once, pinger=pinger)
     except (BrokenPipeError, KeyboardInterrupt):
         return 0
 

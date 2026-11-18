@@ -25,6 +25,7 @@ Panel {
   property var qbt: ({ ok: false, state: "connecting", error: "connecting", rx: 0, tx: 0, ifaces: {} })
   property var system: ({ ok: false, state: "connecting", error: "connecting" })
   property var guests: ({ ok: false, state: "connecting", error: "connecting" })
+  property var ping: ({ ok: false, state: "connecting", error: "connecting" })
   property var netRxHistory: []
   property var netTxHistory: []
   property var qbtRxHistory: []
@@ -39,6 +40,7 @@ Panel {
     qbt = sample.qbt
     if (sample.system) system = sample.system
     if (sample.guests) guests = sample.guests
+    if (sample.ping) ping = sample.ping
     // Offline-Zeitraeume als 0 im Verlauf, damit die Zeitachse weiterlaeuft.
     netRxHistory = Model.push(netRxHistory, net.ok ? net.rx : 0, historyLength)
     netTxHistory = Model.push(netTxHistory, net.ok ? net.tx : 0, historyLength)
@@ -59,7 +61,7 @@ Panel {
   }
 
   // Gesamtstatus fuer die Kopfzeile (alle Karten).
-  readonly property var summary: Model.summarize({ net: net, qbt: qbt, system: system, guests: guests })
+  readonly property var summary: Model.summarize({ net: net, qbt: qbt, system: system, guests: guests, ping: ping })
   readonly property string summaryText: {
     var s = summary
     if (s.kind === "allOk") return strings.t("hero.allOk")
@@ -67,6 +69,8 @@ Panel {
     if (s.kind === "allOffline") return strings.t("hero.allOffline")
     return strings.tn("hero.someOffline", s.offline).arg(Commons.I18n.formatNumber(s.offline, 0)).arg(Commons.I18n.formatNumber(s.total, 0))
   }
+
+  readonly property bool warning: Model.anyWarn({ ping: ping })
 
   readonly property string iface: net.iface || "nic0"
   readonly property string tooltip: [
@@ -103,6 +107,19 @@ Panel {
     tooltipText: root.tooltip
     dimmed: !root.net.ok
     onPressed: function(b) { root.toggle() }
+  }
+
+  // Kleiner Warnpunkt (Ping schlecht, spaeter Speicher/SMART).
+  Rectangle {
+    visible: root.warning
+    width: Style.space(7)
+    height: width
+    radius: width / 2
+    color: Commons.Color.urgent
+    anchors.top: button.top
+    anchors.right: button.right
+    anchors.topMargin: Style.space(3)
+    anchors.rightMargin: Style.space(3)
   }
 
   // ---- Popup ---------------------------------------------------------------
@@ -226,6 +243,15 @@ Panel {
           info: root.system
           tr: strings
           statusText: root.statusOf(root.system)
+        }
+
+        PanelSeparator { width: parent.width }
+
+        PingCard {
+          width: parent.width
+          info: root.ping
+          tr: strings
+          statusText: root.statusOf(root.ping)
         }
 
         PanelSeparator { width: parent.width }

@@ -7,6 +7,7 @@ meldet der Kernel EOF, der Agent beendet sich und damit die Sitzung. Deshalb
 braucht der Client kein preexec_fn (das ist mit Threads laut Python-Doku nicht
 sicher) und hinterlaesst keine Waisen-Prozesse.
 """
+import collections
 import re
 import subprocess
 import threading
@@ -18,6 +19,11 @@ from .base import STALE_S, CardState, Source
 MISSING_IFACE_TICKS = 3     # so viele Takte ohne die Haupt-Schnittstelle -> Fehler
 SYSTEM_STALE_S = 15.0       # Agent sendet SYS alle 5 s
 GUESTS_STALE_S = 90.0       # Agent sendet Gaeste alle 30 s
+PING_STALE_S = 20.0         # Agent sendet PING alle 5 s
+PING_WINDOW = 12            # Messungen (a 3 Pakete) fuer den Verlust, ca. 1 min
+PING_HISTORY = 60           # Latenzwerte fuer die Kurve
+PING_WARN_LOSS_PCT = 2.0
+PING_WARN_AVG_MS = 100.0
 COLLECTOR_MAX_AGE_S = 120   # aelter -> der Collector auf dem Server liefert nicht mehr
 CMD_RE = re.compile(r"^[ -~]{1,128}$")      # druckbares ASCII, begrenzte Laenge
 
@@ -31,7 +37,10 @@ class AgentSource(Source):
         self.cfg = cfg
         self.proc = None
         self.send_lock = threading.Lock()
-        self.extra = {"system": CardState(SYSTEM_STALE_S), "guests": CardState(GUESTS_STALE_S)}
+        self.extra = {"system": CardState(SYSTEM_STALE_S), "guests": CardState(GUESTS_STALE_S),
+                      "ping": CardState(PING_STALE_S)}
+        self.ping_window = collections.deque(maxlen=PING_WINDOW)
+        self.ping_history = collections.deque(maxlen=PING_HISTORY)
 
     def snapshots(self):
         out = {"net": self.snapshot()}
@@ -112,6 +121,13 @@ class AgentSource(Source):
             if not parsed:
                 continue
             kind = parsed[0]
+            if kind == "PING":
+                self._publish_ping(parsed[1])
+                continue
+            if kind == "PINGERR":
+                self.extra["ping"].fail("ping-" + parsed[1])
+                self.extra["ping"].invalidate()
+                continue
             if kind == "SYS":
                 self._publish_system(parsed[1])
                 continue
@@ -144,6 +160,18 @@ class AgentSource(Source):
                               "rx": fresh[main]["rx"], "tx": fresh[main]["tx"], "ifaces": fresh})
                 got = True
         return None if got else ""
+
+    def _publish_ping(self, d):
+        self.ping_window.append((d["sent"], d["recv"]))
+        self.ping_history.append(d["avg_ms"])
+        sent = sum(a for a, _ in self.ping_window)
+        recv = sum(b for _, b in self.ping_window)
+        loss = round(100.0 * (sent - recv) / sent, 1) if sent else 0.0
+        avg = d["avg_ms"]
+        self.extra["ping"].publish({
+            "state": "online", "target": d["target"], "avgMs": avg, "lossPct": loss,
+            "history": list(self.ping_history),
+            "warn": loss > PING_WARN_LOSS_PCT or (avg is not None and avg > PING_WARN_AVG_MS) or avg is None})
 
     def _publish_system(self, d):
         self.extra["system"].publish({

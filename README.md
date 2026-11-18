@@ -10,9 +10,11 @@ einzeln aus, ohne die anderen zu stören.
 | qBittorrent: Download / Upload | WebUI-API `/api/v2/transfer/info` | ✅ |
 | System: Last, RAM, CPU-Temperatur, Laufzeit | Agent liest `/proc`, `/sys` | ✅ |
 | Gäste: VMs und Container mit Status | Collector (`pvesh`) → Datei → Agent | ✅ |
-| Ping, Speicher/SMART, Speedtest, Aktionen | | geplant (Phasen 2–5) |
+| Internet: Ping-Latenz und Paketverlust zu 1.1.1.1 | Agent startet unprivilegiertes `ping` | ✅ |
+| Speicher/SMART, Speedtest, Aktionen | | geplant (Phasen 3–5) |
 
-- **Leiste:** nur das Server-Symbol (ausgegraut, wenn der Host offline ist).
+- **Leiste:** nur das Server-Symbol (ausgegraut, wenn der Host offline ist). Ein kleiner roter Punkt daneben warnt,
+  wenn etwas auffällt (aktuell: Ping-Verlust über 2 % oder Latenz über 100 ms).
 - **Tooltip:** die aktuellen Werte.
 - **Klick:** Popup (wie das WLAN-Panel) mit Live-Werten, 90-s-Verlauf, Status je Quelle samt Grund und
   der zweiten Schnittstelle als Zusatzzeile. Schließen mit `Esc` oder Klick daneben.
@@ -52,6 +54,7 @@ SYS <uptime> <ncpu> <l1> <l5> <l15> <mem_total_kB> <mem_avail_kB> <temp_C|->    
 BEGIN GUESTS <alter_s>                   alle 30 s, atomarer Block
 G <vmid> <qemu|lxc> <running|stopped|other> <name>
 END GUESTS                               (oder: MISSING GUESTS, wenn der Collector nichts liefert)
+PING <uptime> <ziel-ip> <gesendet> <empfangen> <avg_ms|->     alle 5 s (3 Pakete); PINGERR unavailable|failed
 ```
 
 Langsame Daten werden seltener gesendet als die Netzwerkzähler. Jede Karte hat ihre eigene
@@ -108,6 +111,9 @@ Der Installer legt den Benutzer `traffic` an, installiert `/usr/local/lib/homese
 (root-eigen), schreibt `/etc/homeserver/agent.conf` (nur wenn sie fehlt) und bindet den Key mit
 `restrict,command="/usr/local/lib/homeserver/agent.py"` an den Agenten: kein Terminal, keine Weiterleitungen,
 nur dieses Programm. Er macht am Ende einen Selbsttest als `traffic` und zeigt den Host-Key-Fingerprint.
+
+**Ping-Ziel:** `ping_target = 1.1.1.1` in `/etc/homeserver/agent.conf`. Erlaubt ist nur eine IP-Adresse (kein Hostname, kein DNS);
+leer schaltet den Ping ab. Der Agent ruft ein festes `ping -n -c 3 -i 0.3 -W 1 <ip>` ohne Shell und ohne root auf.
 
 **Welche Schnittstellen gesendet werden**, steht serverseitig in `/etc/homeserver/agent.conf`
 (`interfaces = nic0 vmbr0`), nicht im Skript. Namen aus `ip -br link`.
@@ -198,6 +204,7 @@ python3 -I plugin/homeserver.py --count 5   # Streamer einzeln ansehen
 | `offline · Server-Agent veraltet` | Server noch auf dem alten `traffic-counters.sh` → `install-server.sh` ausführen |
 | `offline · unerwartete Agent-Antwort` | Protokollversion passt nicht → Agent und Client auf denselben Stand bringen |
 | Gäste: `Collector auf dem Server liefert nicht` | `systemctl status homeserver-collector`, `journalctl -u homeserver-collector -n 20` auf dem Server |
+| Internet: `ping auf dem Server nicht nutzbar` | als `traffic` testen: `su -s /bin/sh traffic -c 'ping -c1 1.1.1.1'` (Rechte/`ping_group_range`) |
 | `offline · Schnittstelle auf dem Server nicht gefunden` | `main_iface` fehlt in `/etc/homeserver/agent.conf` (`interfaces`) |
 | `offline · Login abgelehnt` (qBittorrent) | Benutzer/Passwort in `config.ini`; bei Dauerfehlern sperrt qBittorrent die IP zeitweise |
 | `offline · keine Antwort` | VPN aus? `ip route get <host>` prüfen |

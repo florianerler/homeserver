@@ -93,6 +93,22 @@ function parseGuests(s, base) {
   return base
 }
 
+// Ping-Karte: Latenz, Paketverlust, Kurve (max. 60 Werte, null = alle Pakete verloren).
+function parsePing(s, base) {
+  base.target = str(s.target, 45)
+  base.avgMs = (typeof s.avgMs === "number" && isFinite(s.avgMs) && s.avgMs >= 0) ? s.avgMs : null
+  base.lossPct = Math.min(100, clean(s.lossPct))
+  base.history = []
+  if (Array.isArray(s.history)) {
+    for (var i = Math.max(0, s.history.length - 60); i < s.history.length; i++) {
+      var v = s.history[i]
+      base.history.push((typeof v === "number" && isFinite(v) && v >= 0) ? v : null)
+    }
+  }
+  base.warn = s.warn === true
+  return base
+}
+
 // "5 d 14 h", "3 h 07 min", "12 min": Uptime in Sekunden als kurzer Text.
 function uptimeText(sec) {
   sec = Math.max(0, Math.floor(clean(sec)))
@@ -122,6 +138,7 @@ function parseSample(line) {
     var base = parseSource(obj.cards[name]), raw = obj.cards[name] || {}
     if (base.ok && name === "system") base = parseSystem(raw, base)
     else if (base.ok && name === "guests") base = parseGuests(raw, base)
+    else if (base.ok && name === "ping") base = parsePing(raw, base)
     out[name] = base
   }
   return out
@@ -144,4 +161,10 @@ function summarize(cards) {
   else if (online === 0 && connecting === 0) kind = "allOffline"
   else kind = "someOffline"
   return { kind: kind, online: online, connecting: connecting, offline: offline, total: total }
+}
+
+// true, wenn irgendeine Karte eine Warnung meldet (kleiner Punkt in der Leiste). Offline zaehlt nicht.
+function anyWarn(cards) {
+  for (var k in cards) if (cards[k].ok && cards[k].warn === true) return true
+  return false
 }

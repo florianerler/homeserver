@@ -6,3 +6,6 @@
 # nic0   = physische Karte: gesamter Verkehr auf dem Kabel
 # vmbr0  = Bridge: nur Verkehr des Hosts selbst
 interfaces = nic0 vmbr0
+
+# Ping-Ziel fuer die Latenz-Karte: nur eine IP-Adresse (kein Hostname). Leer = Ping aus.
+ping_target = 1.1.1.1

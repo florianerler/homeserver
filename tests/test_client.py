@@ -330,6 +330,61 @@ class ParseNewLines(unittest.TestCase):
             self.assertIsNone(protocol.parse_line(bad), bad)
 
 
+class PingCardTests(unittest.TestCase):
+    def ping_snapshot(self, lines, until, loops=30):
+        src = FakeAgentSource([sys.executable, "-c", fake_stream("NET @.0 lo @0 @0", *lines, loops=loops)])
+        try:
+            src.start()
+            end = time.monotonic() + 6
+            while time.monotonic() < end:
+                snap = src.snapshots()["ping"]
+                if until(snap):
+                    return snap
+                time.sleep(0.1)
+            return src.snapshots()["ping"]
+        finally:
+            src.stop()
+
+    def test_parse(self):
+        self.assertEqual(protocol.parse_line("PING 5.0 1.1.1.1 3 2 12.5")[1]["recv"], 2)
+        for bad in ["PING 5.0 1.1.1.1 3 4 1", "PING 5.0 evil 3 3 1", "PING 5.0 1.1.1.1 3 0 5", "PING 5.0 1.1.1.1 3 3 -",
+                    "PING 5.0 1.1.1.1 0 0 -", "PINGERR kaputt", "PING 5.0 1.1.1.1 3 3"]:
+            self.assertIsNone(protocol.parse_line(bad), bad)
+
+    def test_good_latency_no_warning(self):
+        snap = self.ping_snapshot(["PING @.0 1.1.1.1 3 3 12.00"], lambda s: s["ok"])
+        self.assertTrue(snap["ok"], snap)
+        self.assertEqual(snap["avgMs"], 12.0); self.assertEqual(snap["lossPct"], 0.0)
+        self.assertFalse(snap["warn"])
+
+    def test_loss_window_and_warning(self):
+        snap = self.ping_snapshot(["PING @.0 1.1.1.1 3 2 12.00"], lambda s: s["ok"] and len(s["history"]) >= 3)
+        self.assertAlmostEqual(snap["lossPct"], 33.3, places=1)
+        self.assertTrue(snap["warn"])
+
+    def test_high_latency_warns(self):
+        snap = self.ping_snapshot(["PING @.0 1.1.1.1 3 3 150.00"], lambda s: s["ok"])
+        self.assertTrue(snap["warn"])
+
+    def test_everything_lost_warns_and_keeps_gap(self):
+        snap = self.ping_snapshot(["PING @.0 1.1.1.1 3 0 -"], lambda s: s["ok"] and len(s["history"]) >= 2)
+        self.assertIsNone(snap["avgMs"]); self.assertEqual(snap["lossPct"], 100.0)
+        self.assertTrue(snap["warn"]); self.assertEqual(snap["history"][-1], None)
+
+    def test_ping_error_stays_local(self):
+        src = FakeAgentSource([sys.executable, "-c", fake_stream("NET @.0 lo @0 @0", "PINGERR unavailable")])
+        try:
+            src.start()
+            end = time.monotonic() + 6
+            while time.monotonic() < end and src.snapshots()["ping"].get("error") != "ping-unavailable":
+                time.sleep(0.1)
+            snaps = src.snapshots()
+        finally:
+            src.stop()
+        self.assertEqual(snaps["ping"]["error"], "ping-unavailable")
+        self.assertFalse(snaps["ping"]["ok"]); self.assertTrue(snaps["net"]["ok"])
+
+
 class MultiCardIntegration(unittest.TestCase):
     def run_fake(self, *lines, until, loops=40):
         src = FakeAgentSource([sys.executable, "-c", fake_stream(*lines, loops=loops)])
@@ -396,7 +451,7 @@ class SnapshotShape(unittest.TestCase):
         names = []
         for src in (AgentSource(CFG), QbtSource(cfg)):
             names += list(src.snapshots())
-        self.assertEqual(sorted(names), ["guests", "net", "qbt", "system"])
+        self.assertEqual(sorted(names), ["guests", "net", "ping", "qbt", "system"])
         self.assertTrue(all(re.match(r"^[a-z]{1,16}$", n) for n in names))
 
     def test_static_failure_covers_all_cards(self):

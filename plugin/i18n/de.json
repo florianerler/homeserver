@@ -45,5 +45,12 @@
   "guest.running": "läuft",
   "guest.stopped": "gestoppt",
   "guest.other": "unbekannt",
-  "err.collector-offline": "Collector auf dem Server liefert nicht"
+  "err.collector-offline": "Collector auf dem Server liefert nicht",
+  "ping": "Internet (Ping)",
+  "ping.latency": "Latenz",
+  "ping.loss": "Paketverlust",
+  "ping.lost": "alle Pakete verloren",
+  "ping.target": "Ziel",
+  "err.ping-unavailable": "ping auf dem Server nicht nutzbar",
+  "err.ping-failed": "Messung fehlgeschlagen"
 }

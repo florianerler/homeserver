@@ -45,5 +45,12 @@
   "guest.running": "running",
   "guest.stopped": "stopped",
   "guest.other": "unknown",
-  "err.collector-offline": "server collector not delivering"
+  "err.collector-offline": "server collector not delivering",
+  "ping": "Internet (ping)",
+  "ping.latency": "Latency",
+  "ping.loss": "Packet loss",
+  "ping.lost": "all packets lost",
+  "ping.target": "Target",
+  "err.ping-unavailable": "ping unusable on the server",
+  "err.ping-failed": "measurement failed"
 }

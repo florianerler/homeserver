@@ -7,11 +7,14 @@ Jede Zeile beginnt mit einem Typ-Praefix, Felder sind durch Leerzeichen getrennt
     SYS <uptime> <ncpu> <l1> <l5> <l15> <memtotal_kB> <memavail_kB> <temp_C|->
     BEGIN GUESTS <alter_s> / G <vmid> <qemu|lxc> <running|stopped|other> <name> / END GUESTS
     MISSING GUESTS
+    PING <uptime> <ip> <sent> <received> <avg_ms|->
+    PINGERR <unavailable|failed>
 
 Unbekannte Typen werden ignoriert (neuere Agenten bleiben kompatibel), ungueltige
 Zeilen ergeben None. Die Zeilenlaenge ist begrenzt.
 """
 import math
+import ipaddress
 import re
 
 PROTOCOL_VERSION = 1
@@ -73,6 +76,10 @@ def parse_line(line):
         return "NET", (up, parts[2], rx, tx)
     if kind == "SYS":
         return _parse_sys(parts)
+    if kind == "PING":
+        return _parse_ping(parts)
+    if kind == "PINGERR":
+        return ("PINGERR", parts[1]) if len(parts) == 2 and parts[1] in ("unavailable", "failed") else None
     if kind == "BEGIN":
         if len(parts) == 3 and parts[1] == "GUESTS" and parts[2].isdigit():
             return "BEGIN", ("GUESTS", int(parts[2]))
@@ -90,6 +97,27 @@ def parse_line(line):
             return None
         return "G", (vmid, parts[2], parts[3], parts[4])
     return None
+
+
+def _parse_ping(parts):
+    if len(parts) != 6 or not parts[3].isdigit() or not parts[4].isdigit():
+        return None
+    try:
+        ipaddress.ip_address(parts[2])
+    except ValueError:
+        return None
+    sent, recv = int(parts[3]), int(parts[4])
+    if not 0 < sent <= 100 or recv > sent or _number(parts[1]) is None:
+        return None
+    if parts[5] == "-":
+        avg = None
+    else:
+        avg = _number(parts[5])
+        if avg is None or avg >= 100000:
+            return None
+    if (avg is None) != (recv == 0):
+        return None
+    return "PING", {"target": parts[2], "sent": sent, "recv": recv, "avg_ms": avg}
 
 
 def _parse_sys(parts):

@@ -1,7 +1,7 @@
 // Test fuer plugin/Model.js:  node tests/test_model.js
 const fs = require("fs"), path = require("path"), assert = require("assert")
 const src = fs.readFileSync(path.join(__dirname, "..", "plugin", "Model.js"), "utf8").replace(/^\.pragma library$/m, "")
-const M = new Function(src + "; return { scale, format, push, peak, parseSample, summarize, uptimeText, memUsedFraction }")()
+const M = new Function(src + "; return { scale, format, push, peak, parseSample, summarize, uptimeText, memUsedFraction, anyWarn }")()
 const fmt = (v, d) => v.toFixed(d)
 
 assert.strictEqual(M.format(0, fmt), "0 B/s")
@@ -67,4 +67,18 @@ console.log("Model.js: alle Tests ok")
   assert.strictEqual(M.uptimeText(59), "0 min"); assert.strictEqual(M.uptimeText(-1), "0 min")
   assert.strictEqual(M.memUsedFraction(100, 25), 0.75); assert.strictEqual(M.memUsedFraction(0, 5), 0)
   console.log("Model.js Phase 1: ok")
+})()
+
+;(function () {
+  const mk = (ping) => M.parseSample(JSON.stringify({ v: 2, cards: { net: {}, qbt: {}, ping } }))
+  const good = mk({ ok: true, state: "online", target: "1.1.1.1", avgMs: 12.5, lossPct: 0, history: [10, null, 12, "x", -5], warn: false })
+  assert.strictEqual(good.ping.avgMs, 12.5); assert.deepStrictEqual(good.ping.history, [10, null, 12, null, null])
+  assert.strictEqual(M.anyWarn({ ping: good.ping }), false)
+  const bad = mk({ ok: true, state: "online", target: "1.1.1.1", avgMs: null, lossPct: 500, history: new Array(200).fill(5), warn: true })
+  assert.strictEqual(bad.ping.avgMs, null); assert.strictEqual(bad.ping.lossPct, 100); assert.strictEqual(bad.ping.history.length, 60)
+  assert.strictEqual(M.anyWarn({ ping: bad.ping }), true)
+  const off = mk({ ok: false, state: "offline", error: "ping-failed", warn: true })
+  assert.strictEqual(M.anyWarn({ ping: off.ping }), false)          // offline zaehlt nicht als Warnung
+  assert.strictEqual(M.anyWarn({}), false)
+  console.log("Model.js Phase 2: ok")
 })()

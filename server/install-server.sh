@@ -45,6 +45,9 @@ fi
 
 echo "== Selbsttest als Benutzer traffic (ein Takt):"
 su -s /bin/sh traffic -c "python3 $LIB/agent.py --once" || { echo "Selbsttest FEHLGESCHLAGEN" >&2; exit 1; }
+echo "== Ping als Benutzer traffic (muss ohne root funktionieren):"
+if su -s /bin/sh traffic -c 'ping -n -c 1 -W 2 1.1.1.1' 2>&1 | grep -E "packets transmitted|not permitted|denied|command not found"; then :; else echo "WARNUNG: ping nicht ausgewertet" >&2; fi
+
 echo "== Fertig. Host-Key-Fingerprint (gegen die Abfrage vom Client pruefen):"
 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 echo "Rueckfall auf das alte Skript (falls noetig): /usr/local/bin/traffic-counters.sh liegt noch dort."
