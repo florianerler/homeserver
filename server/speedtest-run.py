@@ -44,8 +44,12 @@ def failure_detail(exc):
 
 
 def find_tool(tools=TOOLS):
+    """Erstes vorhandenes Programm. Die Art wird am ECHTEN Dateinamen erkannt: Das Debian-Paket speedtest-cli
+    legt /usr/bin/speedtest als Verweis auf speedtest-cli an; das versteht die Ookla-Optionen nicht."""
     for kind, path, args in tools:
         if os.access(path, os.X_OK):
+            if os.path.basename(os.path.realpath(path)) == "speedtest-cli":
+                return "cli", [path, "--json"]
             return kind, [path] + args
     return None
 

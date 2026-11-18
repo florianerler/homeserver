@@ -114,6 +114,17 @@ class RunOnce(unittest.TestCase):
         with open(path) as fh:
             self.assertEqual(len(fh.readlines()), 3)
 
+    def test_debian_symlink_speedtest_to_speedtest_cli_is_detected(self):
+        real = os.path.join(self.dir, "speedtest-cli")
+        with open(real, "w") as fh:
+            fh.write("#!/bin/sh\n")
+        os.chmod(real, 0o755)
+        link = os.path.join(self.dir, "speedtest")
+        os.symlink(real, link)
+        kind, argv = run.find_tool((("ookla", link, ["--accept-license", "--format=json"]),))
+        self.assertEqual(kind, "cli")
+        self.assertEqual(argv, [link, "--json"])                       # keine Ookla-Optionen
+
     def test_tool_preference_ookla_first(self):
         t = (("ookla", self.tool, ["--x"]), ("cli", self.tool, []))
         self.assertEqual(run.find_tool(t)[0], "ookla")
