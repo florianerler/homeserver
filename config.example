@@ -1,6 +1,6 @@
-# Kopie nach ~/.config/homeserver-traffic/config.ini, dann chmod 600.
+# Kopie nach ~/.config/homeserver/config.ini, dann chmod 600.
 # Diese Datei NIE ins Git-Repo legen (steht in .gitignore).
-# Hinweis: '%' im Passwort ist erlaubt (kein configparser-Interpolation).
+# Hinweis: '%' im Passwort ist erlaubt (keine configparser-Interpolation).
 
 [ssh]
 # Proxmox-Host. Die IP funktioniert im LAN und ueber das WireGuard-VPN,
@@ -8,12 +8,17 @@
 # gepinnt (known_hosts); bei Namenswechsel neu pinnen (siehe README).
 host = 192.168.1.10
 user = traffic
-key = ~/.config/homeserver-traffic/id_ed25519
-known_hosts = ~/.config/homeserver-traffic/known_hosts
-# Hauptanzeige: nic0 = ganze Leitung inkl. Gaeste, vmbr0 = nur Host selbst
+key = ~/.config/homeserver/id_ed25519
+known_hosts = ~/.config/homeserver/known_hosts
+# Hauptanzeige: eine der Schnittstellen aus /etc/homeserver/agent.conf auf dem Server.
+# nic0 = ganze Leitung inkl. Gaeste, vmbr0 = nur Host selbst
 main_iface = nic0
 
 [qbittorrent]
+# http:// oder https://. Bei https wird das Zertifikat immer geprueft.
 url = http://192.168.1.20:8080
 username = CHANGE_ME
 password = CHANGE_ME
+# Optional (nur https): gezielt dieser CA vertrauen, z. B. bei eigener CA.
+# Ohne Angabe gilt der System-Zertifikatsspeicher. Die Pruefung bleibt in jedem Fall an.
+# ca_file = ~/.config/homeserver/qbittorrent-ca.pem

@@ -6,13 +6,13 @@ import qs.Commons
 import qs.Commons as Commons
 import "Model.js" as Model
 
-// Heimserver-Traffic: Leistenanzeige (Variante A: Host-Raten), Tooltip mit allen
-// vier Werten und ein Popup mit Verlauf. Die Daten liefert homeserver_traffic.py
-// als JSON-Zeilen (eine pro Sekunde); die Leiste startet es einmal und liest mit.
+// Homeserver: Server-Icon in der Leiste, Tooltip und ein Popup mit Karten. Die Daten
+// liefert homeserver.py als JSON-Snapshots (einer pro Sekunde); die Leiste startet es
+// einmal und liest mit.
 Panel {
   id: root
-  moduleName: "homeserver.traffic"
-  ipcTarget: "homeserver.traffic"
+  moduleName: "homeserver"
+  ipcTarget: "homeserver"
 
   readonly property int historyLength: 90
 
@@ -21,7 +21,7 @@ Panel {
 
   Commons.Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
 
-  property var host: ({ ok: false, state: "connecting", error: "connecting", rx: 0, tx: 0, ifaces: {} })
+  property var net: ({ ok: false, state: "connecting", error: "connecting", rx: 0, tx: 0, ifaces: {} })
   property var qbt: ({ ok: false, state: "connecting", error: "connecting", rx: 0, tx: 0, ifaces: {} })
   property var hostRxHistory: []
   property var hostTxHistory: []
@@ -33,11 +33,11 @@ Panel {
   function ingest(line) {
     var sample = Model.parseSample(line)
     if (!sample) return
-    host = sample.host
+    net = sample.net
     qbt = sample.qbt
     // Offline-Zeitraeume als 0 im Verlauf, damit die Zeitachse weiterlaeuft.
-    hostRxHistory = Model.push(hostRxHistory, host.ok ? host.rx : 0, historyLength)
-    hostTxHistory = Model.push(hostTxHistory, host.ok ? host.tx : 0, historyLength)
+    hostRxHistory = Model.push(hostRxHistory, net.ok ? net.rx : 0, historyLength)
+    hostTxHistory = Model.push(hostTxHistory, net.ok ? net.tx : 0, historyLength)
     qbtRxHistory = Model.push(qbtRxHistory, qbt.ok ? qbt.rx : 0, historyLength)
     qbtTxHistory = Model.push(qbtTxHistory, qbt.ok ? qbt.tx : 0, historyLength)
   }
@@ -54,10 +54,20 @@ Panel {
     return src.ok ? "↓ " + fmt(src.rx) + "   ↑ " + fmt(src.tx) : "–"
   }
 
-  readonly property string iface: host.iface || "nic0"
+  // Gesamtstatus fuer die Kopfzeile (alle Karten).
+  readonly property var summary: Model.summarize({ net: net, qbt: qbt })
+  readonly property string summaryText: {
+    var s = summary
+    if (s.kind === "allOk") return strings.t("hero.allOk")
+    if (s.kind === "connecting") return strings.t("hero.connecting")
+    if (s.kind === "allOffline") return strings.t("hero.allOffline")
+    return strings.tn("hero.someOffline", s.offline).arg(Commons.I18n.formatNumber(s.offline, 0)).arg(Commons.I18n.formatNumber(s.total, 0))
+  }
+
+  readonly property string iface: net.iface || "nic0"
   readonly property string tooltip: [
     strings.t("host") + " (" + iface + ")",
-    "  " + rateLine(host),
+    "  " + rateLine(net),
     strings.t("qbt"),
     "  " + rateLine(qbt)
   ].join("\n")
@@ -68,7 +78,7 @@ Panel {
   // ---- Streamer ------------------------------------------------------------
   Process {
     id: streamer
-    command: ["python3", "-I", root.pluginDir + "/homeserver_traffic.py"]
+    command: ["python3", "-I", root.pluginDir + "/homeserver.py"]
     running: true
     stdout: SplitParser { onRead: function(line) { root.ingest(line) } }
     // Endet er (Absturz), wird er nach kurzer Pause neu gestartet.
@@ -87,7 +97,7 @@ Panel {
     bar: root.bar
     text: "󰒍"
     tooltipText: root.tooltip
-    dimmed: !root.host.ok
+    dimmed: !root.net.ok
     onPressed: function(b) { root.toggle() }
   }
 
@@ -146,7 +156,7 @@ Panel {
             }
             Text {
               textFormat: Text.PlainText
-              text: root.host.ok && root.qbt.ok ? strings.t("hero.bothOnline") : strings.t("hero.someOffline")
+              text: root.summaryText
               color: Qt.darker(Commons.Color.foreground, 1.4)
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
@@ -157,20 +167,23 @@ Panel {
         SourceCard {
           width: parent.width
           title: strings.t("host") + " · " + root.iface
-          statusText: root.statusOf(root.host)
-          online: root.host.ok
-          rx: root.host.rx
-          tx: root.host.tx
-          rxHistory: root.hostRxHistory
-          txHistory: root.hostTxHistory
+          statusText: root.statusOf(root.net)
+          online: root.net.ok
+          rx: root.net.rx
+          tx: root.net.tx
+          rxHistory: root.netRxHistory
+          txHistory: root.netTxHistory
           window: root.historyLength
           downLabel: strings.t("download")
           upLabel: strings.t("upload")
-          peakText: strings.t("note.peak").arg(root.historyLength).arg(root.fmt(Model.peak(root.hostRxHistory, root.hostTxHistory)))
+          peakText: strings.t("note.peak").arg(root.historyLength).arg(root.fmt(Model.peak(root.netRxHistory, root.netTxHistory)))
           extraText: {
-            var other = root.iface === "nic0" ? "vmbr0" : "nic0"
-            var f = root.host.ifaces ? root.host.ifaces[other] : null
-            return root.host.ok && f
+            // Erste andere vom Server gemeldete Schnittstelle (konfigurierbar, nicht fest verdrahtet).
+            var other = "", f = null
+            for (var k in root.net.ifaces) {
+              if (k !== root.iface) { other = k; f = root.net.ifaces[k]; break }
+            }
+            return root.net.ok && f
               ? strings.t("note.hostOnly").arg(other).arg(root.fmt(f.rx)).arg(root.fmt(f.tx))
               : ""
           }

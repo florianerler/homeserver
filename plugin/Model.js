@@ -45,22 +45,53 @@ function peak(a, b) {
   return m
 }
 
-// Eine JSON-Zeile des Streamers pruefen und bereinigen. Gibt null bei Muell zurueck.
+// Eine Quelle (Karte) aus dem Snapshot pruefen und bereinigen.
+function parseSource(s) {
+  if (!s || typeof s !== "object") s = {}
+  var out = { ok: s.ok === true, state: String(s.state || "offline").slice(0, 16),
+              error: String(s.error || "").slice(0, 32), rx: clean(s.rx), tx: clean(s.tx), ifaces: {} }
+  if (s.ifaces && typeof s.ifaces === "object") {
+    var n = 0
+    for (var k in s.ifaces) {
+      if (++n > 8) break
+      var f = s.ifaces[k]
+      if (f && typeof f === "object") out.ifaces[String(k).slice(0, 16)] = { rx: clean(f.rx), tx: clean(f.tx) }
+    }
+  }
+  if (typeof s.iface === "string") out.iface = s.iface.slice(0, 16)
+  return out
+}
+
+// Eine JSON-Zeile (Snapshot v2) des Streamers pruefen. Gibt null bei Muell zurueck.
+// -> { net: <Quelle>, qbt: <Quelle>, ... } fuer jede Karte in "cards" (max. 16).
 function parseSample(line) {
   var obj
   try { obj = JSON.parse(line) } catch (e) { return null }
-  if (!obj || typeof obj !== "object" || !obj.host || !obj.qbt) return null
-  function source(s) {
-    var out = { ok: s.ok === true, state: String(s.state || "offline"),
-                error: String(s.error || ""), rx: clean(s.rx), tx: clean(s.tx), ifaces: {} }
-    if (s.ifaces && typeof s.ifaces === "object") {
-      for (var k in s.ifaces) {
-        var f = s.ifaces[k]
-        if (f && typeof f === "object") out.ifaces[String(k)] = { rx: clean(f.rx), tx: clean(f.tx) }
-      }
-    }
-    if (typeof s.iface === "string") out.iface = s.iface.slice(0, 16)
-    return out
+  if (!obj || typeof obj !== "object" || obj.v !== 2 || !obj.cards || typeof obj.cards !== "object") return null
+  if (!obj.cards.net || !obj.cards.qbt) return null
+  var out = {}, n = 0
+  for (var name in obj.cards) {
+    if (++n > 16) break
+    if (/^[a-z]{1,16}$/.test(name)) out[name] = parseSource(obj.cards[name])
   }
-  return { host: source(obj.host), qbt: source(obj.qbt) }
+  return out
+}
+
+// Gesamtstatus fuer die Kopfzeile des Popups.
+// kind: allOk | connecting | allOffline | someOffline (dann ist offline die Anzahl).
+function summarize(cards) {
+  var online = 0, connecting = 0, offline = 0
+  for (var k in cards) {
+    var c = cards[k]
+    if (c.ok) online++
+    else if (c.state === "connecting") connecting++
+    else offline++
+  }
+  var total = online + connecting + offline
+  var kind
+  if (offline === 0 && connecting === 0) kind = "allOk"
+  else if (offline === 0) kind = "connecting"
+  else if (online === 0 && connecting === 0) kind = "allOffline"
+  else kind = "someOffline"
+  return { kind: kind, online: online, connecting: connecting, offline: offline, total: total }
 }

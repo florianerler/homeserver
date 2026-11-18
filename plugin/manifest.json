@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "id": "homeserver.traffic",
-  "name": "Homeserver traffic",
+  "id": "homeserver",
+  "name": "Homeserver",
   "version": "1.0.0",
   "author": "Erler Florian",
   "license": "MIT",
-  "description": "Live network rates of the Proxmox host (SSH counters) and qBittorrent (WebUI API).",
+  "description": "Live status of the Proxmox host (SSH agent) and qBittorrent.",
   "kinds": [
     "bar-widget"
   ],
@@ -13,8 +13,8 @@
     "barWidget": "Panel.qml"
   },
   "barWidget": {
-    "displayName": "Homeserver traffic",
-    "description": "Download and upload rates of the Proxmox host and qBittorrent.",
+    "displayName": "Homeserver",
+    "description": "Network rates and status of the home server.",
     "category": "Network",
     "allowMultiple": false,
     "defaultSection": "right"

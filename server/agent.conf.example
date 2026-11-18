@@ -1,0 +1,8 @@
+# /etc/homeserver/agent.conf  (root:root, 0644, keine Secrets)
+# Wird vom Installer nur angelegt, wenn die Datei noch nicht existiert.
+
+[agent]
+# Netzwerk-Schnittstellen, deren Zaehler gesendet werden (Namen aus `ip -br link`).
+# nic0   = physische Karte: gesamter Verkehr auf dem Kabel
+# vmbr0  = Bridge: nur Verkehr des Hosts selbst
+interfaces = nic0 vmbr0

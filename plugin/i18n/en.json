@@ -1,5 +1,5 @@
 {
-  "title": "Homeserver traffic",
+  "title": "Homeserver",
   "host": "Proxmox host",
   "qbt": "qBittorrent",
   "download": "Download",
@@ -19,6 +19,18 @@
   "err.generic": "error",
   "note.peak": "Peak (last %1 s): %2",
   "note.hostOnly": "%1 (host itself): %2 ↓  %3 ↑",
-  "hero.bothOnline": "Both sources reachable",
-  "hero.someOffline": "A source is offline"
+  "hero.allOk": "All sources reachable",
+  "hero.connecting": "Connecting…",
+  "hero.allOffline": "All sources offline",
+  "hero.someOffline": {
+    "one": "%1 of %2 sources offline",
+    "other": "%1 of %2 sources offline"
+  },
+  "err.unreachable": "host unreachable",
+  "err.tls": "TLS check failed",
+  "err.agent-outdated": "server agent outdated",
+  "err.agent-protocol": "unexpected agent reply",
+  "err.iface-missing": "interface not found on server",
+  "err.config-url": "invalid qBittorrent URL",
+  "err.config-ca": "CA file not found"
 }
