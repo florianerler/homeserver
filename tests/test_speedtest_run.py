@@ -138,6 +138,10 @@ class Units(unittest.TestCase):
         self.assertIn("PathExists=/run/homeserver-trigger/speedtest", self.read("homeserver-speedtest.path"))
         self.assertIn("0/3", self.read("homeserver-speedtest.timer"))
 
+    def test_data_dir_exists_before_first_run(self):
+        # sonst meldet der Agent "unavailable" und der Knopf kann nie den ersten Test ausloesen
+        self.assertIn("d /var/lib/homeserver-speedtest 0755 hs-speedtest hs-speedtest", self.read("homeserver-tmpfiles.conf"))
+
 
 if __name__ == "__main__":
     unittest.main()
