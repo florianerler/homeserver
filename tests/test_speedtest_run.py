@@ -64,7 +64,7 @@ class RunOnce(unittest.TestCase):
         h = self.hist()
         self.assertEqual((h[0]["down"], h[0]["up"]), (480000, 52000))
         self.assertEqual(oct(os.stat(os.path.join(self.dir, "history.jsonl")).st_mode & 0o777), "0o644")
-        self.assertEqual(self.calls, [[self.tool]])                     # fester Befehl, keine Extra-Argumente
+        self.assertEqual(self.calls, [[self.tool, "--json"]])           # fester Befehl, keine weiteren Argumente
 
     def test_cooldown_blocks_second_run(self):
         now = int(time.time())
@@ -114,16 +114,28 @@ class RunOnce(unittest.TestCase):
         with open(path) as fh:
             self.assertEqual(len(fh.readlines()), 3)
 
-    def test_debian_symlink_speedtest_to_speedtest_cli_is_detected(self):
-        real = os.path.join(self.dir, "speedtest-cli")
-        with open(real, "w") as fh:
-            fh.write("#!/bin/sh\n")
-        os.chmod(real, 0o755)
-        link = os.path.join(self.dir, "speedtest")
-        os.symlink(real, link)
-        kind, argv = run.find_tool((("ookla", link, ["--accept-license", "--format=json"]),))
-        self.assertEqual(kind, "cli")
-        self.assertEqual(argv, [link, "--json"])                       # keine Ookla-Optionen
+    def test_auto_kind_is_probed(self):
+        t = (("auto", self.tool, run.OOKLA_ARGS),)
+        kind, argv = run.find_tool(t, probe=lambda p: "cli")
+        self.assertEqual((kind, argv), ("cli", [self.tool, "--json"]))               # Debian-Skript: keine Ookla-Optionen
+        kind, argv = run.find_tool(t, probe=lambda p: "ookla")
+        self.assertEqual((kind, argv), ("ookla", [self.tool] + run.OOKLA_ARGS))
+        self.assertIsNone(run.find_tool(t, probe=lambda p: None))                      # unbekanntes Programm: nicht benutzen
+
+    def test_unknown_auto_falls_through_to_next_candidate(self):
+        t = (("auto", self.tool, run.OOKLA_ARGS), ("cli", self.tool, ["--json"]))
+        self.assertEqual(run.find_tool(t, probe=lambda p: None)[0], "cli")
+
+    def test_probe_kind_reads_version_output(self):
+        self.assertEqual(run.probe_kind("x", runner=lambda argv: "Speedtest by Ookla 1.2.0\n"), "ookla")
+        self.assertEqual(run.probe_kind("x", runner=lambda argv: "speedtest-cli 2.1.3\nPython 3.13\n"), "cli")
+        self.assertIsNone(run.probe_kind("x", runner=lambda argv: "irgendwas"))
+        self.assertIsNone(run.probe_kind("x", runner=lambda argv: (_ for _ in ()).throw(OSError("x"))))
+
+    def test_probe_runs_only_version_option(self):
+        seen = []
+        run.probe_kind("/usr/bin/speedtest", runner=lambda argv: seen.append(argv) or "")
+        self.assertEqual(seen, [["/usr/bin/speedtest", "--version"]])
 
     def test_tool_preference_ookla_first(self):
         t = (("ookla", self.tool, ["--x"]), ("cli", self.tool, []))

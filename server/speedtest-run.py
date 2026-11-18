@@ -24,12 +24,29 @@ MAX_ENTRIES = 300
 TIMEOUT_S = 150
 MAX_OUTPUT = 1 << 20
 ENV = {"PATH": "/usr/bin:/bin", "LANG": "C", "HOME": STATE_DIR}
-# Feste Kandidaten (nie $PATH): Ookla-CLI bevorzugt, sonst das Debian-Paket speedtest-cli.
+# Feste Kandidaten (nie $PATH). "auto" = Art am Programm selbst erkennen: /usr/bin/speedtest kann die Ookla-CLI
+# ODER ein Einstiegsskript des Debian-Pakets speedtest-cli sein.
+OOKLA_ARGS = ["--accept-license", "--accept-gdpr", "--format=json"]
 TOOLS = (
-    ("ookla", "/usr/bin/speedtest", ["--accept-license", "--accept-gdpr", "--format=json"]),
-    ("ookla", "/usr/local/bin/speedtest", ["--accept-license", "--accept-gdpr", "--format=json"]),
+    ("auto", "/usr/bin/speedtest", OOKLA_ARGS),
+    ("auto", "/usr/local/bin/speedtest", OOKLA_ARGS),
     ("cli", "/usr/bin/speedtest-cli", ["--json"]),
 )
+
+
+def probe_kind(path, runner=None):
+    """'ookla' | 'cli' | None, erkannt an 'path --version' (feste Option, kurzes Zeitlimit)."""
+    try:
+        run = runner or (lambda argv: subprocess.run(argv, capture_output=True, text=True, timeout=10,
+                                                     check=False, env=ENV).stdout)
+        out = run([path, "--version"])[:2000].lower()
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if "ookla" in out:
+        return "ookla"
+    if "speedtest-cli" in out:
+        return "cli"
+    return None
 
 
 def failure_detail(exc):
@@ -43,14 +60,16 @@ def failure_detail(exc):
     return f"{type(exc).__name__}" + (f": {last}" if last else "")
 
 
-def find_tool(tools=TOOLS):
-    """Erstes vorhandenes Programm. Die Art wird am ECHTEN Dateinamen erkannt: Das Debian-Paket speedtest-cli
-    legt /usr/bin/speedtest als Verweis auf speedtest-cli an; das versteht die Ookla-Optionen nicht."""
+def find_tool(tools=TOOLS, probe=probe_kind):
+    """Erstes brauchbare Programm -> (art, argv) oder None. Unklare Programme werden per --version erkannt."""
     for kind, path, args in tools:
-        if os.access(path, os.X_OK):
-            if os.path.basename(os.path.realpath(path)) == "speedtest-cli":
-                return "cli", [path, "--json"]
-            return kind, [path] + args
+        if not os.access(path, os.X_OK):
+            continue
+        if kind == "auto":
+            kind = probe(path)
+            if kind is None:
+                continue
+        return kind, [path] + (["--json"] if kind == "cli" else (args if kind == "ookla" else []))
     return None
 
 
