@@ -1,0 +1,19 @@
+# Kopie nach ~/.config/homeserver-traffic/config.ini, dann chmod 600.
+# Diese Datei NIE ins Git-Repo legen (steht in .gitignore).
+# Hinweis: '%' im Passwort ist erlaubt (kein configparser-Interpolation).
+
+[ssh]
+# Proxmox-Host. Die IP funktioniert im LAN und ueber das WireGuard-VPN,
+# solange das VPN dieses Subnetz routet. Der Host-Key ist auf diese Adresse
+# gepinnt (known_hosts); bei Namenswechsel neu pinnen (siehe README).
+host = 192.168.1.10
+user = traffic
+key = ~/.config/homeserver-traffic/id_ed25519
+known_hosts = ~/.config/homeserver-traffic/known_hosts
+# Hauptanzeige: nic0 = ganze Leitung inkl. Gaeste, vmbr0 = nur Host selbst
+main_iface = nic0
+
+[qbittorrent]
+url = http://192.168.1.20:8080
+username = CHANGE_ME
+password = CHANGE_ME

@@ -1,0 +1,11 @@
+# Geheimnisse und lokale Dateien: niemals einchecken
+config.ini
+config.ini.save
+*.pem
+id_ed25519*
+*.key
+known_hosts
+*.jar
+__pycache__/
+*.pyc
+*.bak*

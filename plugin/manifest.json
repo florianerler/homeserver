@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "homeserver.traffic",
+  "name": "Homeserver traffic",
+  "version": "1.0.0",
+  "author": "operator",
+  "license": "MIT",
+  "description": "Live network rates of the Proxmox host (SSH counters) and qBittorrent (WebUI API).",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Homeserver traffic",
+    "description": "Download and upload rates of the Proxmox host and qBittorrent.",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
