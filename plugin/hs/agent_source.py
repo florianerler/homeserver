@@ -24,7 +24,12 @@ PING_WINDOW = 12            # Messungen (a 3 Pakete) fuer den Verlust, ca. 1 min
 PING_HISTORY = 60           # Latenzwerte fuer die Kurve
 PING_WARN_LOSS_PCT = 2.0
 PING_WARN_AVG_MS = 100.0
-COLLECTOR_MAX_AGE_S = 120   # aelter -> der Collector auf dem Server liefert nicht mehr
+COLLECTOR_MAX_AGE_S = 120
+SMART_MAX_AGE_S = 1800      # Collector prueft SMART alle 10 min
+STORAGE_WARN_PCT = 85.0
+SECTION_CARD = {"GUESTS": "guests", "STORAGE": "storage", "SMART": "smart"}
+SECTION_LINE = {"GUESTS": "G", "STORAGE": "S", "SMART": "D"}
+SECTION_MAX_AGE_S = {"GUESTS": COLLECTOR_MAX_AGE_S, "STORAGE": COLLECTOR_MAX_AGE_S, "SMART": SMART_MAX_AGE_S}   # aelter -> der Collector auf dem Server liefert nicht mehr
 CMD_RE = re.compile(r"^[ -~]{1,128}$")      # druckbares ASCII, begrenzte Laenge
 
 
@@ -38,7 +43,8 @@ class AgentSource(Source):
         self.proc = None
         self.send_lock = threading.Lock()
         self.extra = {"system": CardState(SYSTEM_STALE_S), "guests": CardState(GUESTS_STALE_S),
-                      "ping": CardState(PING_STALE_S)}
+                      "ping": CardState(PING_STALE_S),
+                      "storage": CardState(GUESTS_STALE_S), "smart": CardState(GUESTS_STALE_S)}
         self.ping_window = collections.deque(maxlen=PING_WINDOW)
         self.ping_history = collections.deque(maxlen=PING_HISTORY)
 
@@ -131,8 +137,8 @@ class AgentSource(Source):
             if kind == "SYS":
                 self._publish_system(parsed[1])
                 continue
-            if kind in ("BEGIN", "G", "END", "MISSING"):
-                block = self._guests_block(block, kind, parsed[1])
+            if kind in ("BEGIN", "G", "S", "D", "END", "MISSING"):
+                block = self._block(block, kind, parsed[1])
                 continue
             if kind != "NET":
                 continue
@@ -179,30 +185,47 @@ class AgentSource(Source):
             "memTotalKb": d["mem_total_kb"], "memAvailKb": d["mem_avail_kb"],
             "tempC": d["temp_c"], "uptime": d["uptime"]})
 
-    def _guests_block(self, block, kind, data):
-        """Gaeste-Bloecke zusammensetzen; ein Block ersetzt die ganze Liste atomar."""
-        card = self.extra["guests"]
+    def _block(self, block, kind, data):
+        """Bloecke (BEGIN <name> ... END <name>) zusammensetzen; ein Block ersetzt die Liste atomar.
+        Ein unvollstaendiger Block (Verbindungsabbruch) wird nie veroeffentlicht."""
         if kind == "BEGIN":
-            return {"age": data[1], "items": []}
-        if kind == "G":
-            if block is not None and len(block["items"]) < protocol.MAX_GUESTS:
-                vmid, gtype, status, name = data
-                block["items"].append({"vmid": vmid, "type": gtype, "status": status, "name": name})
-            return block
+            return {"name": data[0], "age": data[1], "items": []}
         if kind == "MISSING":
-            card.fail("collector-offline")
-            card.invalidate()
+            self._section_fail(data)
             return None
-        if block is not None:                       # END
-            if block["age"] > COLLECTOR_MAX_AGE_S:
-                card.fail("collector-offline")
-                card.invalidate()
-            else:
-                items = block["items"]
-                card.publish({"state": "online", "age": block["age"], "items": items,
-                              "running": sum(1 for g in items if g["status"] == "running"),
-                              "total": len(items)})
+        if kind in ("G", "S", "D"):
+            if block is not None and SECTION_LINE.get(block["name"]) == kind \
+                    and len(block["items"]) < protocol.MAX_SECTION_ITEMS:
+                block["items"].append(data)
+            return block
+        if block is not None and block["name"] == data:                # END
+            self._section_end(block)
         return None
+
+    def _section_fail(self, section):
+        card = self.extra[SECTION_CARD[section]]
+        card.fail("collector-offline")
+        card.invalidate()
+
+    def _section_end(self, block):
+        name = block["name"]
+        if block["age"] > SECTION_MAX_AGE_S[name]:
+            self._section_fail(name)
+            return
+        items = block["items"]
+        card = self.extra[SECTION_CARD[name]]
+        base = {"state": "online", "age": block["age"]}
+        if name == "GUESTS":
+            items = [{"vmid": v, "type": t, "status": st, "name": n} for v, t, st, n in items]
+            base.update(items=items, total=len(items), running=sum(1 for g in items if g["status"] == "running"))
+        elif name == "STORAGE":
+            items = [{"name": n, "type": t, "active": st == "active", "totalKb": tot, "usedKb": used,
+                      "pct": round(100.0 * used / tot, 1) if tot > 0 else 0.0} for n, t, st, tot, used in items]
+            base.update(items=items, warn=any(i["active"] and i["pct"] >= STORAGE_WARN_PCT for i in items))
+        else:
+            items = [{"dev": d, "status": st, "tempC": t} for d, st, t in items]
+            base.update(items=items, warn=any(i["status"] == "failed" for i in items))
+        card.publish(base)
 
     def _close(self, proc):
         """EOF auf stdin lassen (Agent beendet sich), sonst nachhelfen."""

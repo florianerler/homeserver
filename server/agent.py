@@ -15,6 +15,9 @@ Zeilen (Server -> Client):
   SYS <uptime> <ncpu> <l1> <l5> <l15> <memtotal_kB> <memavail_kB> <temp_C|->   alle 5 s
   BEGIN GUESTS <alter_s> / G <vmid> <qemu|lxc> <running|stopped|other> <name> / END GUESTS   alle 30 s
   MISSING GUESTS                                                  wenn der Collector keine Datei liefert
+  BEGIN STORAGE <alter_s> / S <name> <typ> <active|inactive> <total_kB> <used_kB> / END STORAGE   alle 30 s
+  BEGIN SMART <alter_s> / D <geraet> <passed|failed|standby|unknown> <temp_C|-> / END SMART       alle 30 s
+  MISSING STORAGE | MISSING SMART
   PING <uptime> <ziel-ip> <gesendet> <empfangen> <avg_ms|->       alle 5 s (unprivilegiertes ping, 3 Pakete)
   PINGERR <unavailable|failed>                                    ping nicht nutzbar
 """
@@ -42,6 +45,9 @@ PROC_LOADAVG = "/proc/loadavg"
 PROC_MEMINFO = "/proc/meminfo"
 HWMON = "/sys/class/hwmon"
 GUESTS_FILE = "/run/homeserver/guests.json"
+STORAGE_FILE = "/run/homeserver/storage.json"
+SMART_FILE = "/run/homeserver/smart.json"
+DEV_RE = re.compile(r"^[a-z0-9]{1,16}$")
 TEMP_DRIVERS = ("coretemp", "k10temp", "zenpower", "cpu_thermal")     # Reihenfolge = Vorrang
 TEMP_LABELS = ("package id 0", "tctl", "tdie", "cpu")
 SYS_EVERY = 5               # Takte (Sekunden) zwischen SYS-Zeilen
@@ -207,6 +213,76 @@ def read_guests(path=GUESTS_FILE, now=None):
     return ("ok", max(0, int(now - ts)), items)
 
 
+def _load_file(path):
+    """JSON-Datei des Collectors lesen (begrenzt): (ts, dict) oder None."""
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read(MAX_FILE_BYTES + 1)
+        if len(raw) > MAX_FILE_BYTES:
+            return None
+        data = json.loads(raw)
+        return int(data["ts"]), data
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def read_storage(path=STORAGE_FILE, now=None):
+    loaded = _load_file(path)
+    if not loaded or not isinstance(loaded[1].get("storages"), list):
+        return ("missing",)
+    ts, data = loaded
+    items = []
+    for g in data["storages"][:32]:
+        try:
+            name, kind = str(g["name"]), str(g["type"])
+            total, used = int(g["total_kb"]), int(g["used_kb"])
+            status = "active" if g["status"] == "active" else "inactive"
+        except (KeyError, TypeError, ValueError):
+            continue
+        if name != sanitize_name(name) or kind != sanitize_name(kind) or len(kind) > 16 or total < 0 or used < 0:
+            continue
+        items.append((name, kind, status, total, used))
+    now = time.time() if now is None else now
+    return ("ok", max(0, int(now - ts)), items)
+
+
+def read_smart(path=SMART_FILE, now=None):
+    loaded = _load_file(path)
+    if not loaded or not isinstance(loaded[1].get("disks"), list):
+        return ("missing",)
+    ts, data = loaded
+    items = []
+    for g in data["disks"][:8]:
+        try:
+            dev = str(g["dev"])
+            status = g["status"] if g["status"] in ("passed", "failed", "standby", "unknown") else "unknown"
+            temp = g.get("temp")
+            temp = int(temp) if isinstance(temp, (int, float)) and -50 < temp < 150 else None
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not DEV_RE.match(dev):
+            continue
+        items.append((dev, status, temp))
+    now = time.time() if now is None else now
+    return ("ok", max(0, int(now - ts)), items)
+
+
+def section_lines(name, result, fmt):
+    """Block 'BEGIN <name> <alter> ... END <name>' oder 'MISSING <name>'."""
+    if result[0] != "ok":
+        return [f"MISSING {name}"]
+    _, age, items = result
+    return [f"BEGIN {name} {age}"] + [fmt(i) for i in items] + [f"END {name}"]
+
+
+def storage_lines(result):
+    return section_lines("STORAGE", result, lambda i: f"S {i[0]} {i[1]} {i[2]} {i[3]} {i[4]}")
+
+
+def smart_lines(result):
+    return section_lines("SMART", result, lambda i: f"D {i[0]} {i[1]} {'-' if i[2] is None else i[2]}")
+
+
 def guests_lines(result):
     if result[0] != "ok":
         return ["MISSING GUESTS"]
@@ -340,6 +416,8 @@ def tick_lines(ifaces, tick, sys_every=SYS_EVERY, guests_every=GUESTS_EVERY):
             lines.append(line)
     if tick % guests_every == 0:
         lines.extend(guests_lines(read_guests()))
+        lines.extend(storage_lines(read_storage()))
+        lines.extend(smart_lines(read_smart()))
     return lines
 
 

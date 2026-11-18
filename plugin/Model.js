@@ -93,6 +93,46 @@ function parseGuests(s, base) {
   return base
 }
 
+// Speicherkarte: Fuellstand je Speicher (kB-Werte, pct vom Agenten berechnet, hier nachgeprueft).
+function parseStorage(s, base) {
+  base.items = []
+  if (Array.isArray(s.items)) {
+    for (var i = 0; i < s.items.length && base.items.length < 32; i++) {
+      var g = s.items[i]
+      if (!g || typeof g !== "object") continue
+      var total = clean(g.totalKb), used = clean(g.usedKb)
+      base.items.push({ name: str(g.name, 32), type: str(g.type, 16), active: g.active === true,
+                        totalKb: total, usedKb: used, pct: total > 0 ? Math.min(100, 100 * used / total) : 0 })
+    }
+  }
+  base.warn = base.items.some(function(x) { return x.active && x.pct >= 85 })
+  return base
+}
+
+// SMART-Karte: Gesundheit je Platte. Nur "failed" ist eine Warnung (Standby/unbekannt nicht).
+function parseSmart(s, base) {
+  base.items = []
+  if (Array.isArray(s.items)) {
+    for (var i = 0; i < s.items.length && base.items.length < 8; i++) {
+      var d = s.items[i]
+      if (!d || typeof d !== "object") continue
+      var st = ["passed", "failed", "standby", "unknown"].indexOf(d.status) >= 0 ? d.status : "unknown"
+      base.items.push({ dev: str(d.dev, 16), status: st,
+                        tempC: (typeof d.tempC === "number" && isFinite(d.tempC) && d.tempC > -50 && d.tempC < 150) ? d.tempC : null })
+    }
+  }
+  base.warn = base.items.some(function(x) { return x.status === "failed" })
+  return base
+}
+
+// kB (KiB) als "98,5 GB" / "1,2 TB".
+function sizeText(kb, fmtNumber) {
+  kb = clean(kb)
+  var gb = kb / 1048576
+  if (gb >= 1024) return fmtNumber(gb / 1024, 1) + " TB"
+  return fmtNumber(gb, gb >= 100 ? 0 : 1) + " GB"
+}
+
 // Ping-Karte: Latenz, Paketverlust, Kurve (max. 60 Werte, null = alle Pakete verloren).
 function parsePing(s, base) {
   base.target = str(s.target, 45)
@@ -139,6 +179,8 @@ function parseSample(line) {
     if (base.ok && name === "system") base = parseSystem(raw, base)
     else if (base.ok && name === "guests") base = parseGuests(raw, base)
     else if (base.ok && name === "ping") base = parsePing(raw, base)
+    else if (base.ok && name === "storage") base = parseStorage(raw, base)
+    else if (base.ok && name === "smart") base = parseSmart(raw, base)
     out[name] = base
   }
   return out

@@ -1,7 +1,7 @@
 // Test fuer plugin/Model.js:  node tests/test_model.js
 const fs = require("fs"), path = require("path"), assert = require("assert")
 const src = fs.readFileSync(path.join(__dirname, "..", "plugin", "Model.js"), "utf8").replace(/^\.pragma library$/m, "")
-const M = new Function(src + "; return { scale, format, push, peak, parseSample, summarize, uptimeText, memUsedFraction, anyWarn }")()
+const M = new Function(src + "; return { scale, format, push, peak, parseSample, summarize, uptimeText, memUsedFraction, anyWarn, sizeText }")()
 const fmt = (v, d) => v.toFixed(d)
 
 assert.strictEqual(M.format(0, fmt), "0 B/s")
@@ -81,4 +81,25 @@ console.log("Model.js: alle Tests ok")
   assert.strictEqual(M.anyWarn({ ping: off.ping }), false)          // offline zaehlt nicht als Warnung
   assert.strictEqual(M.anyWarn({}), false)
   console.log("Model.js Phase 2: ok")
+})()
+
+;(function () {
+  const mk = (cards) => M.parseSample(JSON.stringify({ v: 2, cards: Object.assign({ net: {}, qbt: {} }, cards) }))
+  const st = mk({ storage: { ok: true, state: "online", items: [
+    { name: "local", type: "dir", active: true, totalKb: 1000, usedKb: 100 },
+    { name: "big", type: "lvmthin", active: true, totalKb: 1000, usedKb: 900 },
+    { name: "off", type: "pbs", active: false, totalKb: 0, usedKb: 0 }, null, "x" ] } }).storage
+  assert.deepStrictEqual(st.items.map(i => Math.round(i.pct)), [10, 90, 0]); assert.strictEqual(st.warn, true)
+  const inactiveFull = mk({ storage: { ok: true, items: [{ name: "x", type: "dir", active: false, totalKb: 10, usedKb: 10 }] } }).storage
+  assert.strictEqual(inactiveFull.warn, false)                      // inaktive Speicher warnen nicht
+  assert.strictEqual(mk({ storage: { ok: true, items: [{ name: "x", type: "d", active: true, totalKb: 10, usedKb: 99 }] } }).storage.items[0].pct, 100)
+  const sm = mk({ smart: { ok: true, items: [{ dev: "sda", status: "passed", tempC: 34 }, { dev: "sdb", status: "standby", tempC: null },
+                                              { dev: "sdc", status: "bogus", tempC: 9999 }] } }).smart
+  assert.deepStrictEqual(sm.items.map(i => i.status), ["passed", "standby", "unknown"]); assert.strictEqual(sm.items[2].tempC, null)
+  assert.strictEqual(sm.warn, false)
+  assert.strictEqual(mk({ smart: { ok: true, items: [{ dev: "sda", status: "failed" }] } }).smart.warn, true)
+  const f = (v, d) => v.toFixed(d)
+  assert.strictEqual(M.sizeText(1048576, f), "1.0 GB"); assert.strictEqual(M.sizeText(1048576 * 2048, f), "2.0 TB")
+  assert.strictEqual(M.sizeText(-5, f), "0.0 GB")
+  console.log("Model.js Phase 3: ok")
 })()

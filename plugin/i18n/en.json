@@ -52,5 +52,14 @@
   "ping.lost": "all packets lost",
   "ping.target": "Target",
   "err.ping-unavailable": "ping unusable on the server",
-  "err.ping-failed": "measurement failed"
+  "err.ping-failed": "measurement failed",
+  "storage": "Storage",
+  "storage.none": "no storage",
+  "storage.inactive": "inactive",
+  "smart": "SMART (disk health)",
+  "smart.none": "no disks found",
+  "smart.passed": "OK",
+  "smart.failed": "FAILING",
+  "smart.standby": "standby (not woken)",
+  "smart.unknown": "unknown"
 }

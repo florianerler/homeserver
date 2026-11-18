@@ -43,6 +43,20 @@ else
   systemctl status homeserver-collector --no-pager 2>&1 | head -8 >&2
 fi
 
+for _ in $(seq 1 30); do [ -s /run/homeserver/smart.json ] && break; sleep 1; done
+python3 - <<'PY'
+import json
+for f, key in (("storage", "storages"), ("smart", "disks")):
+    try:
+        d = json.load(open(f"/run/homeserver/{f}.json"))
+        if f == "smart":
+            print("Collector SMART:", ", ".join(f"{x['dev']}={x['status']}" for x in d[key]) or "keine Platten")
+        else:
+            print("Collector Speicher:", ", ".join(x["name"] for x in d[key]))
+    except (OSError, ValueError, KeyError):
+        print(f"WARNUNG: /run/homeserver/{f}.json fehlt (journalctl -u homeserver-collector -n 20)")
+PY
+
 echo "== Selbsttest als Benutzer traffic (ein Takt):"
 su -s /bin/sh traffic -c "python3 $LIB/agent.py --once" || { echo "Selbsttest FEHLGESCHLAGEN" >&2; exit 1; }
 echo "== Ping als Benutzer traffic (muss ohne root funktionieren):"

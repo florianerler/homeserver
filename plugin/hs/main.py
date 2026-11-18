@@ -25,7 +25,7 @@ def main(argv=None):
         sources = (AgentSource(cfg), QbtSource(cfg))
     except cfgmod.ConfigError as e:
         print(f"homeserver: {e}", file=sys.stderr)
-        sources = (StaticFailure(str(e), ("net", "system", "guests", "ping")), StaticFailure(str(e), ("qbt",)))
+        sources = (StaticFailure(str(e), ("net", "system", "guests", "ping", "storage", "smart")), StaticFailure(str(e), ("qbt",)))
 
     def shutdown(*_):
         for s in sources:

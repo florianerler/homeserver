@@ -172,6 +172,41 @@ class Guests(unittest.TestCase):
         self.assertEqual(res[1], 0)
 
 
+class StorageSmart(unittest.TestCase):
+    def file(self, tmp, obj, name="f.json"):
+        path = os.path.join(tmp, name)
+        write(path, json.dumps(obj))
+        return path
+
+    def test_storage_lines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.file(tmp, {"ts": 100, "storages": [
+                {"name": "local", "type": "dir", "status": "active", "total_kb": 1000, "used_kb": 100},
+                {"name": "bad name", "type": "dir", "status": "active", "total_kb": 1, "used_kb": 1},
+                {"name": "neg", "type": "dir", "status": "active", "total_kb": -1, "used_kb": 1},
+                {"name": "off", "type": "pbs", "status": "weird", "total_kb": 0, "used_kb": 0}, "x"]})
+            res = agent.read_storage(path, now=110)
+        self.assertEqual(agent.storage_lines(res), ["BEGIN STORAGE 10", "S local dir active 1000 100",
+                                                    "S off pbs inactive 0 0", "END STORAGE"])
+
+    def test_smart_lines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.file(tmp, {"ts": 100, "disks": [
+                {"dev": "sda", "status": "passed", "temp": 34}, {"dev": "nvme0", "status": "failed", "temp": None},
+                {"dev": "../x", "status": "passed", "temp": 1}, {"dev": "sdb", "status": "bogus", "temp": 9999}]})
+            res = agent.read_smart(path, now=100)
+        self.assertEqual(agent.smart_lines(res), ["BEGIN SMART 0", "D sda passed 34", "D nvme0 failed -",
+                                                  "D sdb unknown -", "END SMART"])
+
+    def test_missing(self):
+        self.assertEqual(agent.storage_lines(agent.read_storage("/nicht/da")), ["MISSING STORAGE"])
+        self.assertEqual(agent.smart_lines(agent.read_smart("/nicht/da")), ["MISSING SMART"])
+        with tempfile.TemporaryDirectory() as tmp:
+            p = os.path.join(tmp, "x.json")
+            write(p, "{kaputt")
+            self.assertEqual(agent.read_smart(p), ("missing",))
+
+
 class Schedule(unittest.TestCase):
     def test_slow_data_is_sent_less_often(self):
         with tempfile.TemporaryDirectory() as tmp:

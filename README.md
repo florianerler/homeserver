@@ -11,7 +11,9 @@ einzeln aus, ohne die anderen zu stören.
 | System: Last, RAM, CPU-Temperatur, Laufzeit | Agent liest `/proc`, `/sys` | ✅ |
 | Gäste: VMs und Container mit Status | Collector (`pvesh`) → Datei → Agent | ✅ |
 | Internet: Ping-Latenz und Paketverlust zu 1.1.1.1 | Agent startet unprivilegiertes `ping` | ✅ |
-| Speicher/SMART, Speedtest, Aktionen | | geplant (Phasen 3–5) |
+| Speicher: Füllstand je Storage (Warnung ab 85 %, kritisch ab 95 %) | Collector (`pvesm status`) | ✅ |
+| SMART: Gesundheit je Platte (nur Warnung bei „FEHLER“) | Collector (`smartctl`) | ✅ |
+| Speedtest, Aktionen | | geplant (Phasen 4–5) |
 
 - **Leiste:** nur das Server-Symbol (ausgegraut, wenn der Host offline ist). Ein kleiner roter Punkt daneben warnt,
   wenn etwas auffällt (aktuell: Ping-Verlust über 2 % oder Latenz über 100 ms).
@@ -54,6 +56,8 @@ SYS <uptime> <ncpu> <l1> <l5> <l15> <mem_total_kB> <mem_avail_kB> <temp_C|->    
 BEGIN GUESTS <alter_s>                   alle 30 s, atomarer Block
 G <vmid> <qemu|lxc> <running|stopped|other> <name>
 END GUESTS                               (oder: MISSING GUESTS, wenn der Collector nichts liefert)
+BEGIN STORAGE <alter_s> / S <name> <typ> <active|inactive> <total_kB> <used_kB> / END STORAGE     alle 30 s
+BEGIN SMART <alter_s> / D <gerät> <passed|failed|standby|unknown> <temp_C|-> / END SMART         alle 30 s (Collector prüft alle 10 min)
 PING <uptime> <ziel-ip> <gesendet> <empfangen> <avg_ms|->     alle 5 s (3 Pakete); PINGERR unavailable|failed
 ```
 
@@ -153,7 +157,8 @@ zusätzlicher (stark eingeschränkter) Zugang zum Host nötig. Ein Proxmox-API-T
 - Befehle an den Server nur über eine **feste Whitelist** im Agenten: exakte Namen, Argumente nur als
   harmlose Tokens, keine Shell-Auslegung, keine freien Argumente. Alles andere → `denied`.
 - Alles, was root braucht, erledigt der **Collector** (`homeserver-collector.service`): feste Befehle ohne
-  Shell und mit Zeitlimit (aktuell nur `pvesh get /cluster/resources --type vm`), keine Eingabe von außen,
+  Shell und mit Zeitlimit (`pvesh get /cluster/resources --type vm`, `pvesm status`, `smartctl --scan` und `smartctl -j -H -A -n standby -d <typ> <gerät>`;
+  Geräte und `-d`-Typen stammen aus einer Whitelist, `smartctl` darf Platten im Standby nicht wecken), keine Eingabe von außen,
   Ausgabe wird validiert und bereinigt (Gastnamen nur `A-Za-z0-9._-`), Ergebnis als Datei in `/run/homeserver/`
   (root schreibt, alle lesen). Der Dienst ist per systemd gehärtet (`NoNewPrivileges`, `ProtectSystem`,
   `ProtectHome`, Speicher-/Task-Limit). Es gibt kein sudo für den Benutzer `traffic`.
@@ -204,6 +209,7 @@ python3 -I plugin/homeserver.py --count 5   # Streamer einzeln ansehen
 | `offline · Server-Agent veraltet` | Server noch auf dem alten `traffic-counters.sh` → `install-server.sh` ausführen |
 | `offline · unerwartete Agent-Antwort` | Protokollversion passt nicht → Agent und Client auf denselben Stand bringen |
 | Gäste: `Collector auf dem Server liefert nicht` | `systemctl status homeserver-collector`, `journalctl -u homeserver-collector -n 20` auf dem Server |
+| Speicher/SMART: `Collector auf dem Server liefert nicht` | `journalctl -u homeserver-collector`; `smartctl` installiert? (`apt install smartmontools`, nur auf Wunsch) |
 | Internet: `ping auf dem Server nicht nutzbar` | als `traffic` testen: `su -s /bin/sh traffic -c 'ping -c1 1.1.1.1'` (Rechte/`ping_group_range`) |
 | `offline · Schnittstelle auf dem Server nicht gefunden` | `main_iface` fehlt in `/etc/homeserver/agent.conf` (`interfaces`) |
 | `offline · Login abgelehnt` (qBittorrent) | Benutzer/Passwort in `config.ini`; bei Dauerfehlern sperrt qBittorrent die IP zeitweise |

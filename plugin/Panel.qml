@@ -26,6 +26,8 @@ Panel {
   property var system: ({ ok: false, state: "connecting", error: "connecting" })
   property var guests: ({ ok: false, state: "connecting", error: "connecting" })
   property var ping: ({ ok: false, state: "connecting", error: "connecting" })
+  property var storage: ({ ok: false, state: "connecting", error: "connecting" })
+  property var smart: ({ ok: false, state: "connecting", error: "connecting" })
   property var netRxHistory: []
   property var netTxHistory: []
   property var qbtRxHistory: []
@@ -41,6 +43,8 @@ Panel {
     if (sample.system) system = sample.system
     if (sample.guests) guests = sample.guests
     if (sample.ping) ping = sample.ping
+    if (sample.storage) storage = sample.storage
+    if (sample.smart) smart = sample.smart
     // Offline-Zeitraeume als 0 im Verlauf, damit die Zeitachse weiterlaeuft.
     netRxHistory = Model.push(netRxHistory, net.ok ? net.rx : 0, historyLength)
     netTxHistory = Model.push(netTxHistory, net.ok ? net.tx : 0, historyLength)
@@ -61,7 +65,7 @@ Panel {
   }
 
   // Gesamtstatus fuer die Kopfzeile (alle Karten).
-  readonly property var summary: Model.summarize({ net: net, qbt: qbt, system: system, guests: guests, ping: ping })
+  readonly property var summary: Model.summarize({ net: net, qbt: qbt, system: system, guests: guests, ping: ping, storage: storage, smart: smart })
   readonly property string summaryText: {
     var s = summary
     if (s.kind === "allOk") return strings.t("hero.allOk")
@@ -70,7 +74,7 @@ Panel {
     return strings.tn("hero.someOffline", s.offline).arg(Commons.I18n.formatNumber(s.offline, 0)).arg(Commons.I18n.formatNumber(s.total, 0))
   }
 
-  readonly property bool warning: Model.anyWarn({ ping: ping })
+  readonly property bool warning: Model.anyWarn({ ping: ping, storage: storage, smart: smart })
 
   readonly property string iface: net.iface || "nic0"
   readonly property string tooltip: [
@@ -252,6 +256,24 @@ Panel {
           info: root.ping
           tr: strings
           statusText: root.statusOf(root.ping)
+        }
+
+        PanelSeparator { width: parent.width }
+
+        StorageCard {
+          width: parent.width
+          info: root.storage
+          tr: strings
+          statusText: root.statusOf(root.storage)
+        }
+
+        PanelSeparator { width: parent.width }
+
+        SmartCard {
+          width: parent.width
+          info: root.smart
+          tr: strings
+          statusText: root.statusOf(root.smart)
         }
 
         PanelSeparator { width: parent.width }

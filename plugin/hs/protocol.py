@@ -23,6 +23,10 @@ MAX_LINE = 512
 IFACE_RE = re.compile(r"^[A-Za-z0-9._-]{1,15}$")
 NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
 MAX_GUESTS = 64
+MAX_SECTION_ITEMS = 64
+SECTIONS = ("GUESTS", "STORAGE", "SMART")      # Bloecke: BEGIN <name> <alter> ... END <name>
+KIND_RE = re.compile(r"^[A-Za-z0-9._-]{1,16}$")
+DEV_RE = re.compile(r"^[a-z0-9]{1,16}$")
 MAX_GAP_S = 5.0     # groesserer Zeitsprung zwischen Zaehlerstaenden -> neu aufsetzen
 
 
@@ -81,13 +85,15 @@ def parse_line(line):
     if kind == "PINGERR":
         return ("PINGERR", parts[1]) if len(parts) == 2 and parts[1] in ("unavailable", "failed") else None
     if kind == "BEGIN":
-        if len(parts) == 3 and parts[1] == "GUESTS" and parts[2].isdigit():
-            return "BEGIN", ("GUESTS", int(parts[2]))
+        if len(parts) == 3 and parts[1] in SECTIONS and parts[2].isdigit():
+            return "BEGIN", (parts[1], int(parts[2]))
         return None
-    if kind == "END":
-        return ("END", "GUESTS") if parts == ["END", "GUESTS"] else None
-    if kind == "MISSING":
-        return ("MISSING", "GUESTS") if parts == ["MISSING", "GUESTS"] else None
+    if kind in ("END", "MISSING"):
+        return (kind, parts[1]) if len(parts) == 2 and parts[1] in SECTIONS else None
+    if kind == "S":
+        return _parse_storage(parts)
+    if kind == "D":
+        return _parse_disk(parts)
     if kind == "G":
         if len(parts) != 5 or not parts[1].isdigit() or not NAME_RE.match(parts[4]):
             return None
@@ -97,6 +103,25 @@ def parse_line(line):
             return None
         return "G", (vmid, parts[2], parts[3], parts[4])
     return None
+
+
+def _parse_storage(parts):
+    if len(parts) != 6 or not NAME_RE.match(parts[1]) or not KIND_RE.match(parts[2]) \
+            or parts[3] not in ("active", "inactive") or not parts[4].isdigit() or not parts[5].isdigit():
+        return None
+    return "S", (parts[1], parts[2], parts[3], int(parts[4]), int(parts[5]))
+
+
+def _parse_disk(parts):
+    if len(parts) != 4 or not DEV_RE.match(parts[1]) or parts[2] not in ("passed", "failed", "standby", "unknown"):
+        return None
+    if parts[3] == "-":
+        temp = None
+    else:
+        if not re.match(r"^-?\d{1,3}$", parts[3]) or not -50 < int(parts[3]) < 150:
+            return None
+        temp = int(parts[3])
+    return "D", (parts[1], parts[2], temp)
 
 
 def _parse_ping(parts):

@@ -385,6 +385,65 @@ class PingCardTests(unittest.TestCase):
         self.assertFalse(snaps["ping"]["ok"]); self.assertTrue(snaps["net"]["ok"])
 
 
+class StorageSmartCards(unittest.TestCase):
+    def snaps(self, lines, until):
+        src = FakeAgentSource([sys.executable, "-c", fake_stream("NET @.0 lo @0 @0", *lines)])
+        try:
+            src.start()
+            end = time.monotonic() + 6
+            while time.monotonic() < end and not until(src.snapshots()):
+                time.sleep(0.1)
+            return src.snapshots()
+        finally:
+            src.stop()
+
+    def test_parse_lines(self):
+        self.assertEqual(protocol.parse_line("S local dir active 1000 100"), ("S", ("local", "dir", "active", 1000, 100)))
+        self.assertEqual(protocol.parse_line("D sda passed 34"), ("D", ("sda", "passed", 34)))
+        self.assertEqual(protocol.parse_line("D nvme0n1 failed -"), ("D", ("nvme0n1", "failed", None)))
+        self.assertEqual(protocol.parse_line("BEGIN STORAGE 5"), ("BEGIN", ("STORAGE", 5)))
+        self.assertEqual(protocol.parse_line("MISSING SMART"), ("MISSING", "SMART"))
+        for bad in ["S local dir weird 1 1", "S local dir active -1 1", "S a;b dir active 1 1", "S local dir active 1",
+                    "D sda bogus 1", "D ../x passed 1", "D sda passed 999", "BEGIN OTHER 1", "END OTHER", "MISSING X"]:
+            self.assertIsNone(protocol.parse_line(bad), bad)
+
+    def test_storage_card_and_warning(self):
+        snaps = self.snaps(["BEGIN STORAGE 3", "S local dir active 1000 100", "S big lvmthin active 1000 900", "END STORAGE"],
+                           lambda s: s["storage"]["ok"])
+        st = snaps["storage"]
+        self.assertTrue(st["ok"], st)
+        self.assertEqual([i["pct"] for i in st["items"]], [10.0, 90.0])
+        self.assertTrue(st["warn"])                                 # 90 % >= 85 %
+
+    def test_storage_ok_without_warning_and_inactive_ignored(self):
+        snaps = self.snaps(["BEGIN STORAGE 3", "S local dir active 1000 100", "S off pbs inactive 0 0", "END STORAGE"],
+                           lambda s: s["storage"]["ok"])
+        self.assertFalse(snaps["storage"]["warn"])
+        self.assertEqual(snaps["storage"]["items"][1]["pct"], 0.0)  # Teilung durch 0 abgefangen
+
+    def test_smart_failed_warns_but_standby_does_not(self):
+        snaps = self.snaps(["BEGIN SMART 5", "D sda passed 30", "D sdb standby -", "END SMART"], lambda s: s["smart"]["ok"])
+        self.assertFalse(snaps["smart"]["warn"])
+        snaps = self.snaps(["BEGIN SMART 5", "D sda failed 30", "END SMART"], lambda s: s["smart"]["ok"])
+        self.assertTrue(snaps["smart"]["warn"])
+
+    def test_old_smart_data_is_offline_but_old_storage_threshold_differs(self):
+        snaps = self.snaps(["BEGIN SMART 600", "D sda passed 30", "END SMART",
+                            "BEGIN STORAGE 600", "S local dir active 1000 100", "END STORAGE"],
+                           lambda s: s["smart"]["ok"] or s["storage"].get("error") == "collector-offline")
+        self.assertTrue(snaps["smart"]["ok"])                       # 10 min alt ist fuer SMART normal
+        self.assertEqual(snaps["storage"]["error"], "collector-offline")
+
+    def test_missing_is_local(self):
+        snaps = self.snaps(["MISSING STORAGE", "MISSING SMART"], lambda s: s["smart"].get("error") == "collector-offline")
+        self.assertEqual(snaps["storage"]["error"], "collector-offline")
+        self.assertTrue(snaps["net"]["ok"])
+
+    def test_block_interleaving_is_not_mixed(self):
+        snaps = self.snaps(["BEGIN STORAGE 1", "D sda passed 30", "END STORAGE"], lambda s: s["storage"]["ok"])
+        self.assertEqual(snaps["storage"]["items"], [])             # falscher Zeilentyp im Block wird ignoriert
+
+
 class MultiCardIntegration(unittest.TestCase):
     def run_fake(self, *lines, until, loops=40):
         src = FakeAgentSource([sys.executable, "-c", fake_stream(*lines, loops=loops)])
@@ -451,7 +510,7 @@ class SnapshotShape(unittest.TestCase):
         names = []
         for src in (AgentSource(CFG), QbtSource(cfg)):
             names += list(src.snapshots())
-        self.assertEqual(sorted(names), ["guests", "net", "ping", "qbt", "system"])
+        self.assertEqual(sorted(names), ["guests", "net", "ping", "qbt", "smart", "storage", "system"])
         self.assertTrue(all(re.match(r"^[a-z]{1,16}$", n) for n in names))
 
     def test_static_failure_covers_all_cards(self):

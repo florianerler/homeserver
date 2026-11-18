@@ -21,6 +21,22 @@ import sys
 import time
 
 RUN_DIR = "/run/homeserver"
+BIN_DIRS = ("/usr/sbin", "/usr/bin", "/sbin", "/bin")      # feste Suchpfade, nie $PATH
+
+
+def fixed_bin(name):
+    """Absoluter Pfad eines Programms aus BIN_DIRS (sonst der Standardpfad; Start schlaegt dann sauber fehl)."""
+    for d in BIN_DIRS:
+        p = os.path.join(d, name)
+        if os.access(p, os.X_OK):
+            return p
+    return os.path.join(BIN_DIRS[0], name)
+
+
+SMART_TYPES = ("scsi", "sat", "ata", "nvme", "auto")     # erlaubte -d Werte (Whitelist)
+DEV_RE = re.compile(r"^/dev/(sd[a-z]{1,2}|nvme[0-9]{1,2}(n[0-9]{1,2})?)$")
+MAX_DISKS = 8
+STORAGE_TOKEN = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
 PVESH = ["/usr/bin/pvesh", "get", "/cluster/resources", "--type", "vm", "--output-format", "json"]
 ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C"}
 MAX_OUTPUT = 1 << 20        # 1 MiB
@@ -64,6 +80,82 @@ def parse_guests(text):
     return guests[:MAX_GUESTS]
 
 
+def parse_storage(text):
+    """Ausgabe von 'pvesm status' (Name Type Status Total Used Available %), Werte in KiB."""
+    out = []
+    for line in text.splitlines()[1:]:
+        cols = line.split()
+        if len(cols) < 6 or not STORAGE_TOKEN.match(cols[0]) or not STORAGE_TOKEN.match(cols[1]):
+            continue
+        try:
+            total, used = int(cols[3]), int(cols[4])
+        except ValueError:
+            continue
+        if total < 0 or used < 0:
+            continue
+        out.append({"name": cols[0], "type": cols[1], "status": "active" if cols[2] == "active" else "inactive",
+                    "total_kb": total, "used_kb": used})
+    if not out:
+        raise ValueError("keine Speicher gefunden")
+    return out[:32]
+
+
+def collect_storage(run=run_fixed):
+    return {"ts": int(time.time()), "storages": parse_storage(run([fixed_bin("pvesm"), "status"]))}
+
+
+def parse_smart_scan(text):
+    """'smartctl --scan' -> [(geraet, typ)], nur Geraete und Typen aus der Whitelist."""
+    disks = []
+    for line in text.splitlines():
+        parts = line.split("#")[0].split()
+        if len(parts) >= 3 and parts[1] == "-d" and DEV_RE.match(parts[0]) and parts[2] in SMART_TYPES:
+            disks.append((parts[0], parts[2]))
+    return disks[:MAX_DISKS]
+
+
+def parse_smart_health(text):
+    """JSON von 'smartctl -j -H -A' -> (status, temp|None); status: passed|failed|standby|unknown."""
+    try:
+        d = json.loads(text)
+    except ValueError:
+        return "unknown", None
+    if not isinstance(d, dict):
+        return "unknown", None
+    temp = None
+    t = d.get("temperature")
+    if isinstance(t, dict) and isinstance(t.get("current"), (int, float)) and -50 < t["current"] < 150:
+        temp = int(t["current"])
+    passed = (d.get("smart_status") or {}).get("passed") if isinstance(d.get("smart_status"), dict) else None
+    if passed is True:
+        return "passed", temp
+    if passed is False:
+        return "failed", temp
+    if "standby" in text.lower():
+        return "standby", None
+    return "unknown", temp
+
+
+def run_smartctl(argv, timeout=20):
+    """smartctl liefert Bitmasken als Exit-Code (auch bei gesunden Platten): Code ignorieren, Ausgabe pruefen."""
+    res = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False, env=ENV)
+    return res.stdout[:MAX_OUTPUT]
+
+
+def collect_smart(run=run_fixed, run_rc=run_smartctl):
+    disks = []
+    smartctl = fixed_bin("smartctl")
+    for dev, dtype in parse_smart_scan(run([smartctl, "--scan"])):
+        types = [dtype] + (["sat"] if dtype == "scsi" else [])       # SATA hinter SCSI-Schicht: -d sat probieren
+        status, temp = "unknown", None
+        for t in types:
+            status, temp = parse_smart_health(run_rc([smartctl, "-j", "-H", "-A", "-n", "standby", "-d", t, dev]))
+            if status != "unknown":
+                break
+        disks.append({"dev": dev[len("/dev/"):], "status": status, "temp": temp})
+    return {"ts": int(time.time()), "disks": disks}
+
+
 def collect_guests(run=run_fixed):
     return {"ts": int(time.time()), "guests": parse_guests(run(PVESH))}
 
@@ -79,6 +171,8 @@ def write_json_atomic(path, obj):
 # Name der Datei -> (Intervall in Sekunden, Sammelfunktion). Spaetere Phasen ergaenzen hier.
 TASKS = {
     "guests.json": (30, collect_guests),
+    "storage.json": (30, collect_storage),
+    "smart.json": (600, collect_smart),
 }
 
 
@@ -87,7 +181,7 @@ def run_task(name, collect, run_dir=RUN_DIR):
     try:
         write_json_atomic(os.path.join(run_dir, name), collect())
         return True
-    except (subprocess.SubprocessError, OSError, ValueError, KeyError) as e:
+    except (subprocess.SubprocessError, OSError, ValueError, KeyError, TypeError) as e:
         print(f"homeserver-collector: {name}: {type(e).__name__}", file=sys.stderr, flush=True)
         return False
 

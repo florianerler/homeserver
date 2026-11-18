@@ -1,0 +1,6 @@
+/dev/sda -d scsi # /dev/sda, SCSI device
+/dev/sdb -d sat # /dev/sdb, SAT device
+/dev/nvme0 -d nvme # /dev/nvme0, NVMe device
+/dev/../etc/passwd -d scsi # boese
+/dev/sdc -d evil # unbekannter Typ
+/dev/sdd -d scsi;reboot # kaputt

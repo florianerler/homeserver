@@ -97,5 +97,71 @@ class Tasks(unittest.TestCase):
         self.assertNotIn("HOME", out)                              # minimale Umgebung
 
 
+SCAN = open(os.path.join(os.path.dirname(__file__), "fixtures", "smartctl_scan.txt")).read()
+PVESM = open(os.path.join(os.path.dirname(__file__), "fixtures", "pvesm_status.txt")).read()
+
+
+class Storage(unittest.TestCase):
+    def test_parse(self):
+        st = collector.parse_storage(PVESM)
+        names = [s["name"] for s in st]
+        self.assertEqual(names, ["local", "local-lvm", "backup"])          # boese/kaputte Zeilen verworfen
+        self.assertEqual(st[1]["used_kb"], 340123456)
+        self.assertEqual(st[2]["status"], "inactive")
+
+    def test_no_storage_raises(self):
+        with self.assertRaises(ValueError):
+            collector.parse_storage("Name Type Status Total Used Available %\n")
+
+    def test_uses_fixed_command(self):
+        seen = []
+        collector.collect_storage(lambda argv, timeout=15: seen.append(argv) or PVESM)
+        self.assertEqual(seen[0][1:], ["status"])
+        self.assertTrue(os.path.isabs(seen[0][0]))
+
+
+class Smart(unittest.TestCase):
+    def test_scan_whitelist(self):
+        self.assertEqual(collector.parse_smart_scan(SCAN),
+                         [("/dev/sda", "scsi"), ("/dev/sdb", "sat"), ("/dev/nvme0", "nvme")])
+
+    def test_health_parsing(self):
+        ok = json.dumps({"smart_status": {"passed": True}, "temperature": {"current": 34}})
+        bad = json.dumps({"smart_status": {"passed": False}})
+        standby = json.dumps({"smartctl": {"messages": [{"string": "Device is in STANDBY mode, exit(2)"}], "exit_status": 2}})
+        self.assertEqual(collector.parse_smart_health(ok), ("passed", 34))
+        self.assertEqual(collector.parse_smart_health(bad), ("failed", None))
+        self.assertEqual(collector.parse_smart_health(standby), ("standby", None))
+        for junk in ["", "kein json", "[1]", "{}", json.dumps({"smart_status": "x"}),
+                     json.dumps({"smart_status": {"passed": True}, "temperature": {"current": 9999}})][:5]:
+            self.assertEqual(collector.parse_smart_health(junk)[0], "unknown", junk)
+        self.assertIsNone(collector.parse_smart_health(json.dumps({"smart_status": {"passed": True}, "temperature": {"current": 9999}}))[1])
+
+    def test_collect_with_scsi_fallback_to_sat_and_fixed_argv(self):
+        calls = []
+
+        def run(argv, timeout=15):
+            return SCAN
+
+        def run_rc(argv, timeout=20):
+            calls.append(argv)
+            dev, t = argv[-1], argv[argv.index("-d") + 1]
+            if dev == "/dev/sda" and t == "scsi":
+                return "{}"                                    # unbekannt -> sat probieren
+            return json.dumps({"smart_status": {"passed": dev != "/dev/sdb"}, "temperature": {"current": 30}})
+        res = collector.collect_smart(run, run_rc)
+        by = {d["dev"]: d["status"] for d in res["disks"]}
+        self.assertEqual(by, {"sda": "passed", "sdb": "failed", "nvme0": "passed"})
+        for argv in calls:                                      # nur feste Argumente, Whitelist-Typen
+            self.assertEqual(argv[1:6], ["-j", "-H", "-A", "-n", "standby"])
+            self.assertIn(argv[argv.index("-d") + 1], collector.SMART_TYPES)
+            self.assertRegex(argv[-1], collector.DEV_RE.pattern)
+        self.assertTrue(any(a[argv_i] == "sat" for a in calls for argv_i in [a.index("-d") + 1] if a[-1] == "/dev/sda"))
+
+    def test_smartctl_exit_code_is_not_an_error(self):
+        out = collector.run_smartctl([sys.executable, "-c", "print('{}'); raise SystemExit(4)"])
+        self.assertEqual(out.strip(), "{}")
+
+
 if __name__ == "__main__":
     unittest.main()

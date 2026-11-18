@@ -52,5 +52,14 @@
   "ping.lost": "alle Pakete verloren",
   "ping.target": "Ziel",
   "err.ping-unavailable": "ping auf dem Server nicht nutzbar",
-  "err.ping-failed": "Messung fehlgeschlagen"
+  "err.ping-failed": "Messung fehlgeschlagen",
+  "storage": "Speicher",
+  "storage.none": "keine Speicher",
+  "storage.inactive": "inaktiv",
+  "smart": "SMART (Plattengesundheit)",
+  "smart.none": "keine Platten gefunden",
+  "smart.passed": "OK",
+  "smart.failed": "FEHLER",
+  "smart.standby": "Standby (nicht geweckt)",
+  "smart.unknown": "unbekannt"
 }
