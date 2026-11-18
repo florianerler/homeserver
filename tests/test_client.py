@@ -389,5 +389,22 @@ class MultiCardIntegration(unittest.TestCase):
         self.assertNotEqual(snaps["guests"]["state"], "online")
 
 
+class SnapshotShape(unittest.TestCase):
+    def test_every_source_has_a_proper_card_name(self):
+        import re
+        cfg = dict(CFG, qb_url="http://127.0.0.1:1", qb_user="u", qb_pass="p", qb_ca="")
+        names = []
+        for src in (AgentSource(CFG), QbtSource(cfg)):
+            names += list(src.snapshots())
+        self.assertEqual(sorted(names), ["guests", "net", "qbt", "system"])
+        self.assertTrue(all(re.match(r"^[a-z]{1,16}$", n) for n in names))
+
+    def test_static_failure_covers_all_cards(self):
+        names = ("net", "system", "guests")
+        snaps = base.StaticFailure("config-missing", names).snapshots()
+        self.assertEqual(sorted(snaps), sorted(names))
+        self.assertEqual(snaps["net"]["error"], "config-missing")
+
+
 if __name__ == "__main__":
     unittest.main()

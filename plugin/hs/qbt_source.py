@@ -16,6 +16,7 @@ class LoginBackoff(Exception):
 
 
 class QbtSource(Source):
+    card_name = "qbt"
     # qBittorrent sperrt Clients standardmaessig 1 h nach 5 aufeinanderfolgenden
     # Login-Fehlern. Nach einem abgelehnten Login deshalb lange warten statt
     # jede Sekunde neu zu probieren (Tippfehler im Passwort = sonst Selbstsperre).
