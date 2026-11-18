@@ -6,7 +6,7 @@ Laeuft als eigener unprivilegierter Benutzer (hs-speedtest), gestartet von syste
 kein Netzwerk-Listener, keine Argumente.
 
   * flock: es laeuft hoechstens ein Test gleichzeitig
-  * Mindestabstand 10 min zwischen zwei Tests (Timer und Klick teilen sich das)
+  * Mindestabstand 10 min zwischen zwei Tests (nach einem Fehler 1 min); Timer und Klick teilen sich das
   * fester Befehl ohne Shell, Zeitlimit, Ausgabe wird validiert
   * Ergebnisse: history.jsonl (30 Tage), Zustand: state.json (atomar ersetzt)
 """
@@ -18,7 +18,8 @@ import sys
 import time
 
 STATE_DIR = "/var/lib/homeserver-speedtest"
-MIN_SPACING_S = 600
+MIN_SPACING_S = 600             # nach einem erfolgreichen Test
+FAIL_SPACING_S = 60             # nach einem fehlgeschlagenen Test (kurz, aber nicht Dauerfeuer)
 KEEP_DAYS = 30
 MAX_ENTRIES = 300
 TIMEOUT_S = 150
@@ -147,8 +148,10 @@ def run_once(state_dir=STATE_DIR, now=None, tools=TOOLS, runner=None):
             return "locked"
         now = int(time.time() if now is None else now)
         state_path = os.path.join(state_dir, "state.json")
-        last = read_state(state_dir).get("finished")
-        if isinstance(last, int) and 0 <= now - last < MIN_SPACING_S:
+        prev = read_state(state_dir)
+        last = prev.get("finished")
+        spacing = FAIL_SPACING_S if prev.get("ok") is False else MIN_SPACING_S
+        if isinstance(last, int) and 0 <= now - last < spacing:
             return "cooldown"
         tool = find_tool(tools)
         if tool is None:

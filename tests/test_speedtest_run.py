@@ -74,6 +74,20 @@ class RunOnce(unittest.TestCase):
         run.write_json_atomic(os.path.join(self.dir, "state.json"), {"state": "idle", "finished": now - 700, "ok": True})
         self.assertEqual(run.run_once(self.dir, now, tools_with(self.tool), self.runner()), "ok")
 
+    def test_short_cooldown_after_failure_long_after_success(self):
+        now = int(time.time())
+        path = os.path.join(self.dir, "state.json")
+        run.write_json_atomic(path, {"state": "idle", "finished": now - 30, "ok": False})
+        self.assertEqual(run.run_once(self.dir, now, tools_with(self.tool), self.runner()), "cooldown")      # < 60 s
+        run.write_json_atomic(path, {"state": "idle", "finished": now - 90, "ok": False})
+        self.assertEqual(run.run_once(self.dir, now, tools_with(self.tool), self.runner()), "ok")            # > 60 s
+        run.write_json_atomic(path, {"state": "idle", "finished": now - 90, "ok": True})
+        self.assertEqual(run.run_once(self.dir, now, tools_with(self.tool), self.runner()), "cooldown")      # Erfolg: 10 min
+
+    def test_agent_and_runner_use_the_same_spacing(self):
+        import agent
+        self.assertEqual((agent.SPEED_MIN_SPACING_S, agent.SPEED_FAIL_SPACING_S), (run.MIN_SPACING_S, run.FAIL_SPACING_S))
+
     def test_not_installed(self):
         self.assertEqual(run.run_once(self.dir, 1000, tools_with("/nicht/da"), self.runner()), "notinstalled")
         self.assertEqual(self.state()["state"], "notinstalled")

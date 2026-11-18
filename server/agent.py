@@ -53,7 +53,8 @@ SMART_FILE = "/run/homeserver/smart.json"
 DEV_RE = re.compile(r"^[a-z0-9]{1,16}$")
 SPEED_DIR = "/var/lib/homeserver-speedtest"
 SPEED_TRIGGER = "/run/homeserver-trigger/speedtest"
-SPEED_MIN_SPACING_S = 600
+SPEED_MIN_SPACING_S = 600           # nach erfolgreichem Test (wie im Runner)
+SPEED_FAIL_SPACING_S = 60           # nach fehlgeschlagenem Test (wie im Runner)
 SPEED_RUNNING_MAX_S = 300           # laenger "running" ohne Ende = Absturz, nicht ewig "laeuft"
 SPEED_BLOCK_EVERY = 300             # Takte
 SPEED_MAX_ENTRIES = 240
@@ -420,8 +421,9 @@ def read_speed_state(speed_dir=SPEED_DIR, trigger=SPEED_TRIGGER, now=None):
     running = state == "running" and started is not None and 0 <= now - started <= SPEED_RUNNING_MAX_S
     if os.path.exists(trigger):
         running = True                                  # angefordert, Dienst startet gleich
-    cooldown = max(0, finished + SPEED_MIN_SPACING_S - now) if finished is not None else 0
     ok = d.get("ok") if isinstance(d.get("ok"), bool) else None
+    spacing = SPEED_FAIL_SPACING_S if ok is False else SPEED_MIN_SPACING_S
+    cooldown = max(0, finished + spacing - now) if finished is not None else 0
     return ("running" if running else "idle"), cooldown, ok
 
 

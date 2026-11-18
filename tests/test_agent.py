@@ -230,6 +230,8 @@ class Speedtest(unittest.TestCase):
         self.assertEqual(agent.read_speed_state(self.dir, self.trigger, now), ("idle", 500, True))    # 10 min Abstand
         self.state({"state": "idle", "finished": now - 700, "ok": False})
         self.assertEqual(agent.read_speed_state(self.dir, self.trigger, now), ("idle", 0, False))
+        self.state({"state": "idle", "finished": now - 20, "ok": False})                              # Fehler: nur 1 min Sperre
+        self.assertEqual(agent.read_speed_state(self.dir, self.trigger, now), ("idle", 40, False))
         self.state({"state": "running", "started": now - 20, "finished": None})
         self.assertEqual(agent.read_speed_state(self.dir, self.trigger, now)[0], "running")
         self.state({"state": "running", "started": now - 5000})                                      # haengengeblieben

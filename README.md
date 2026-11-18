@@ -148,7 +148,7 @@ gehärtet mit `ProtectSystem=strict`, `NoNewPrivileges`, `PrivateTmp`, Speicher-
   Der Agent prüft ihn gegen seine Whitelist und legt nur eine Trigger-Datei in `/run/homeserver-trigger/` an
   (Verzeichnis gehört `traffic`, Modus 0700). Eine `.path`-Unit startet daraufhin den Dienst. Es gibt keinen
   Zugriff auf Befehle oder Argumente von außen.
-- **Schutz vor Dauerfeuer:** `flock` (nur ein Test gleichzeitig) und ein Mindestabstand von 10 Minuten, den
+- **Schutz vor Dauerfeuer:** `flock` (nur ein Test gleichzeitig) und ein Mindestabstand von 10 Minuten (nach einem Fehler 1 Minute), den
   Runner **und** Agent prüfen; der Knopf zeigt „läuft…“ bzw. „wieder möglich in …“.
 - **Verlauf:** `/var/lib/homeserver-speedtest/history.jsonl`, 30 Tage, höchstens 300 Messungen. Misslungene Läufe
   landen nicht im Verlauf, nur im Zustand („letzter Lauf fehlgeschlagen“).
