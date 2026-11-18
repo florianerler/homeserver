@@ -55,7 +55,7 @@ for u in traffic hs-speedtest; do
 done
 if grep -rqsE "(^|[[:space:]])(traffic|hs-speedtest)[[:space:]]" /etc/sudoers /etc/sudoers.d 2>/dev/null; then warn "sudoers erwaehnt traffic oder hs-speedtest"; else ok "kein sudo-Eintrag fuer traffic/hs-speedtest"; fi
 
-section "Sandboxing (systemd-analyze security; kleiner = besser, 'EXPOSED' wuerde Handlungsbedarf bedeuten)"
+section "Sandboxing (systemd-analyze security: grobe Faustregel, kleiner = besser; ein root-Dienst, der Proxmox und Platten lesen muss, landet naturgemaess hoch)"
 for u in homeserver-collector.service homeserver-speedtest.service; do
   echo "  info  $u: $(systemd-analyze security "$u" --no-pager 2>/dev/null | tail -n 1 | sed 's/^[^A-Za-z]*//')"
 done
