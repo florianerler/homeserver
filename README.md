@@ -26,6 +26,7 @@ server/agent.py             Server-Agent (läuft als Benutzer traffic, per comma
 server/agent.conf.example   Server-Konfiguration (welche Schnittstellen gesendet werden)
 server/install-server.sh    einmalig auf dem Proxmox-Host: Benutzer, Agent, Key-Bindung
 server/diagnose.sh          nur lesend: Fakten über den Server sammeln
+server/make-paste-block.sh  erzeugt einen Einfüge-Block für die Server-Einrichtung per Web-Shell
 hooks/homeserver-post-update.sh   stellt den Leisten-Eintrag nach Omarchy-Updates wieder her
 install.sh                  Installation und Migration (idempotent)
 tests/                      Python-, Node- und Installer-Tests
@@ -82,6 +83,13 @@ ssh-keygen -t ed25519 -N "" -C homeserver -f ~/.config/homeserver/id_ed25519
 # Ordner server/ auf den Proxmox-Host bringen und dort als root ausführen:
 tar cz -C ~/Work/homeserver server | ssh root@<proxmox-ip> 'rm -rf /tmp/hs && mkdir /tmp/hs && tar xz -C /tmp/hs'
 ssh root@<proxmox-ip> "sh /tmp/hs/server/install-server.sh '$(cat ~/.config/homeserver/id_ed25519.pub)'"
+```
+
+**Ohne SSH-Zugang als root** (z. B. nur Proxmox-Web-Shell): `server/make-paste-block.sh` erzeugt einen einzigen
+Block zum Einfügen, der die Dateien per Heredoc anlegt und den Installer startet:
+
+```bash
+server/make-paste-block.sh ~/.config/homeserver/id_ed25519.pub | wl-copy    # dann in der Web-Shell einfügen
 ```
 
 Der Installer legt den Benutzer `traffic` an, installiert `/usr/local/lib/homeserver/agent.py`
