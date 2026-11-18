@@ -32,6 +32,17 @@ TOOLS = (
 )
 
 
+def failure_detail(exc):
+    """Kurzer Fehlergrund fuer das Journal: Fehlertyp und die letzte Zeile der Fehlerausgabe des Programms
+    (nur druckbares ASCII, begrenzt). Enthaelt keine Messwerte."""
+    text = getattr(exc, "stderr", None) or ""
+    if isinstance(text, bytes):
+        text = text.decode("ascii", "replace")
+    last = text.strip().splitlines()[-1] if text.strip() else ""
+    last = "".join(c for c in last if " " <= c <= "~")[:200]
+    return f"{type(exc).__name__}" + (f": {last}" if last else "")
+
+
 def find_tool(tools=TOOLS):
     for kind, path, args in tools:
         if os.access(path, os.X_OK):
@@ -124,8 +135,9 @@ def run_once(state_dir=STATE_DIR, now=None, tools=TOOLS, runner=None):
         write_json_atomic(state_path, {"state": "running", "started": now, "finished": last if isinstance(last, int) else None})
         try:
             down, up, ping = PARSERS[kind](runner(argv))
-        except (subprocess.SubprocessError, OSError, ValueError, KeyError, TypeError):
-            write_json_atomic(state_path, {"state": "idle", "finished": int(time.time() if now is None else now), "ok": False})
+        except (subprocess.SubprocessError, OSError, ValueError, KeyError, TypeError) as exc:
+            print(f"homeserver-speedtest: Fehler: {failure_detail(exc)}", file=sys.stderr, flush=True)
+            write_json_atomic(state_path, {"state": "idle", "finished": now, "ok": False})
             return "failed"
         done = int(time.time())
         prune_and_append(os.path.join(state_dir, "history.jsonl"), {"ts": done, "down": down, "up": up, "ping": ping}, done)

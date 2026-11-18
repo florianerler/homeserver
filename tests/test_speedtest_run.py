@@ -120,6 +120,18 @@ class RunOnce(unittest.TestCase):
         self.assertIsNone(run.find_tool((("cli", "/nicht/da", []),)))
 
 
+class FailureDetail(unittest.TestCase):
+    def test_includes_type_and_last_stderr_line_sanitised(self):
+        exc = subprocess.CalledProcessError(1, "x", stderr="Retrieving...\nERROR: HTTP Error 403: Forbidden\x1b[0m\n")
+        d = run.failure_detail(exc)
+        self.assertEqual(d, "CalledProcessError: ERROR: HTTP Error 403: Forbidden[0m")
+        self.assertNotIn("\x1b", d)
+
+    def test_without_stderr_and_limits(self):
+        self.assertEqual(run.failure_detail(ValueError("geheim 123")), "ValueError")           # Meldungstext wird nicht uebernommen
+        self.assertLessEqual(len(run.failure_detail(subprocess.CalledProcessError(1, "x", stderr="a" * 1000))), 240)
+
+
 class Units(unittest.TestCase):
     def read(self, name):
         with open(os.path.join(SH, "server", name)) as fh:
