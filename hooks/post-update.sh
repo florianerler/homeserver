@@ -8,5 +8,5 @@ if [[ -e "$HOME/.config/omarchy/plugins/homeserver-traffic/manifest.json" ]] \
    && ! grep -q '"homeserver.traffic"' "$SHELL_JSON" 2>/dev/null; then
   cp "$SHELL_JSON" "$SHELL_JSON.bak.$(date +%s)"
   omarchy-shell shell rescanPlugins >/dev/null 2>&1
-  omarchy bar put homeserver.traffic --before omarchy.network
+  omarchy bar put homeserver.traffic --before omarchy.tray
 fi

@@ -62,10 +62,6 @@ Panel {
     "  " + rateLine(qbt)
   ].join("\n")
 
-  readonly property string barLabel: host.ok
-    ? "↓ " + fmt(host.rx) + "  ↑ " + fmt(host.tx)
-    : (host.state === "connecting" ? "…" : "–")
-
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
@@ -90,7 +86,6 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     text: "󰒍"
-    labelText: root.barLabel
     tooltipText: root.tooltip
     dimmed: !root.host.ok
     onPressed: function(b) { root.toggle() }

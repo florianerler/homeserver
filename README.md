@@ -8,7 +8,7 @@ Netzwerkverkehr des Heimservers zeigt:
 | Proxmox-Host: Download / Upload | SSH-Dauerverbindung mit eingeschränktem Key, liest nur Zählerstände |
 | qBittorrent: Download / Upload | WebUI-API `/api/v2/transfer/info` |
 
-- **Leiste:** Icon + `↓ 8,7 kB/s ↑ 10,3 kB/s` (Host). Ausgegraut, wenn der Host offline ist.
+- **Leiste:** nur das Server-Symbol (ausgegraut, wenn der Host offline ist). Die Werte gibt es im Tooltip und im Popup.
 - **Tooltip:** alle vier Werte.
 - **Klick:** Popup (wie das WLAN-Panel) mit Live-Werten, 90-s-Verlauf, Erreichbarkeitsstatus
   beider Quellen und der zweiten Schnittstelle als Zusatzzeile. Schließen mit `Esc` oder Klick daneben.
@@ -65,7 +65,7 @@ kein Terminal, keine Weiterleitungen, nur dieses root-eigene Skript, das jede Se
 **Host-Key pinnen** (ohne Blind-Vertrauen). Den Fingerprint zeigt `setup-proxmox.sh` am Ende an:
 
 ```bash
-ssh-keyscan -t ed25519 192.168.60.10 > /tmp/hk
+ssh-keyscan -t ed25519 <proxmox-ip> > /tmp/hk
 ssh-keygen -lf /tmp/hk                      # mit dem Fingerprint vom Server vergleichen!
 install -m 600 /tmp/hk ~/.config/homeserver-traffic/known_hosts
 ```
@@ -141,6 +141,7 @@ python3 plugin/homeserver_traffic.py --count 5   # Streamer einzeln ansehen
 | `offline · Verbindung abgelehnt` | falscher Port (qBittorrent-WebUI), Dienst gestoppt |
 | `config.ini fehlt/unvollständig` | `./install.sh` bzw. `config.example` vergleichen |
 | Widget fehlt in der Leiste | `./install.sh`; `omarchy plugin list` muss `homeserver.traffic` zeigen |
+| Änderung an `Panel.qml` ist nicht sichtbar | Die Shell behält QML im Speicher: `omarchy restart shell` (ein Rescan genügt nicht) |
 | Gar nichts sichtbar | Läuft ein Fenster im Vollbild? Dann blendet Hyprland die Leiste aus |
 
 Streamer von Hand prüfen: `python3 plugin/homeserver_traffic.py --count 5`.

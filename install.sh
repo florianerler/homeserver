@@ -24,7 +24,7 @@ omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
 
 if ! grep -q '"homeserver.traffic"' "$SHELL_JSON"; then
   cp "$SHELL_JSON" "$SHELL_JSON.bak.$(date +%s)"
-  omarchy bar put homeserver.traffic --before omarchy.network
+  omarchy bar put homeserver.traffic --before omarchy.tray
 fi
 
 omarchy hook install post-update "$REPO/hooks/post-update.sh" >/dev/null
