@@ -155,7 +155,9 @@ class QbtLoginBackoff(unittest.TestCase):
         return src
 
     def test_rejected_login_is_not_retried_every_second(self):
-        src = self.make(urllib.error.HTTPError("u", 403, "Forbidden", {}, __import__("io").BytesIO()))
+        err = urllib.error.HTTPError("u", 403, "Forbidden", {}, __import__("io").BytesIO())
+        self.addCleanup(err.close)
+        src = self.make(err)
         for _ in range(10):
             with self.assertRaises((urllib.error.HTTPError, LoginBackoff)):
                 src.poll()
@@ -444,6 +446,63 @@ class StorageSmartCards(unittest.TestCase):
         self.assertEqual(snaps["storage"]["items"], [])             # falscher Zeilentyp im Block wird ignoriert
 
 
+class SpeedCardTests(unittest.TestCase):
+    def snap(self, lines, until, loops=30):
+        src = FakeAgentSource([sys.executable, "-c", fake_stream("NET @.0 lo @0 @0", *lines, loops=loops)])
+        try:
+            src.start()
+            end = time.monotonic() + 6
+            while time.monotonic() < end and not until(src.snapshots()):
+                time.sleep(0.1)
+            return src.snapshots()
+        finally:
+            src.stop()
+
+    def test_state_and_history_merge(self):
+        s = self.snap(["SPEEDSTATE idle 120 1", "BEGIN SPEED 0", "R 7200 480000 52000 12.3", "R 60 500000 60000 9.0", "END SPEED"],
+                      lambda s: s["speed"]["ok"] and len(s["speed"]["history"]) == 2)["speed"]
+        self.assertTrue(s["ok"], s)
+        self.assertFalse(s["running"]); self.assertEqual(s["cooldown"], 120); self.assertTrue(s["lastOk"])
+        self.assertEqual(s["history"][0]["down"], 480000)
+        self.assertGreaterEqual(s["history"][1]["age"], 60)
+
+    def test_running_and_command_feedback(self):
+        s = self.snap(["SPEEDSTATE running 0 -", "CMDRESULT speedtest ok"],
+                      lambda s: s["speed"]["ok"] and s["speed"]["lastCmd"])["speed"]
+        self.assertTrue(s["running"]); self.assertEqual(s["lastCmd"], "ok")
+
+    def test_not_installed_is_local_error(self):
+        snaps = self.snap(["SPEEDSTATE notinstalled 0 -"], lambda s: s["speed"].get("error") == "speed-notinstalled")
+        self.assertEqual(snaps["speed"]["error"], "speed-notinstalled")
+        self.assertTrue(snaps["net"]["ok"])
+
+    def test_missing_history_is_not_an_error(self):
+        s = self.snap(["SPEEDSTATE idle 0 -", "MISSING SPEED"], lambda s: s["speed"]["ok"])["speed"]
+        self.assertTrue(s["ok"]); self.assertEqual(s["history"], [])
+
+    def test_parse_rejects_garbage(self):
+        for bad in ["SPEEDSTATE bogus 0 1", "SPEEDSTATE idle -1 1", "SPEEDSTATE idle 0 2", "SPEEDSTATE idle 99999999 -",
+                    "R 1 0 5 1", "R x 5 5 1", "R 1 5 5", "CMDRESULT speedtest weird", "CMDRESULT a;b ok"]:
+            self.assertIsNone(protocol.parse_line(bad), bad)
+
+
+class ControlLoop(unittest.TestCase):
+    def test_only_whitelisted_commands_reach_the_server(self):
+        import io
+        from hs import main as hsmain
+
+        class Agent:
+            def __init__(self):
+                self.sent = []
+
+            def send(self, line):
+                self.sent.append(line)
+                return True
+        a = Agent()
+        hsmain.control_loop(a, io.StringIO("speedtest\nrm -rf /\nspeedtest extra\n\n$(reboot)\n  speedtest  \nwol gaming\n"))
+        self.assertEqual(a.sent, ["speedtest", "speedtest"])
+
+
 class MultiCardIntegration(unittest.TestCase):
     def run_fake(self, *lines, until, loops=40):
         src = FakeAgentSource([sys.executable, "-c", fake_stream(*lines, loops=loops)])
@@ -510,7 +569,7 @@ class SnapshotShape(unittest.TestCase):
         names = []
         for src in (AgentSource(CFG), QbtSource(cfg)):
             names += list(src.snapshots())
-        self.assertEqual(sorted(names), ["guests", "net", "ping", "qbt", "smart", "storage", "system"])
+        self.assertEqual(sorted(names), ["guests", "net", "ping", "qbt", "smart", "speed", "storage", "system"])
         self.assertTrue(all(re.match(r"^[a-z]{1,16}$", n) for n in names))
 
     def test_static_failure_covers_all_cards(self):

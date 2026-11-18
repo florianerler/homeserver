@@ -18,6 +18,9 @@ Zeilen (Server -> Client):
   BEGIN STORAGE <alter_s> / S <name> <typ> <active|inactive> <total_kB> <used_kB> / END STORAGE   alle 30 s
   BEGIN SMART <alter_s> / D <geraet> <passed|failed|standby|unknown> <temp_C|-> / END SMART       alle 30 s
   MISSING STORAGE | MISSING SMART
+  SPEEDSTATE <running|idle|notinstalled|unavailable> <cooldown_s> <1|0|->   alle 5 s
+  BEGIN SPEED 0 / R <alter_s> <down_kbit> <up_kbit> <ping_ms> / END SPEED         bei neuem Ergebnis, sonst alle 5 min
+  CMDRESULT <name> <ok|busy|cooldown|notinstalled|unavailable|failed|denied>      Antwort auf einen Befehl
   PING <uptime> <ziel-ip> <gesendet> <empfangen> <avg_ms|->       alle 5 s (unprivilegiertes ping, 3 Pakete)
   PINGERR <unavailable|failed>                                    ping nicht nutzbar
 """
@@ -48,6 +51,12 @@ GUESTS_FILE = "/run/homeserver/guests.json"
 STORAGE_FILE = "/run/homeserver/storage.json"
 SMART_FILE = "/run/homeserver/smart.json"
 DEV_RE = re.compile(r"^[a-z0-9]{1,16}$")
+SPEED_DIR = "/var/lib/homeserver-speedtest"
+SPEED_TRIGGER = "/run/homeserver-trigger/speedtest"
+SPEED_MIN_SPACING_S = 600
+SPEED_RUNNING_MAX_S = 300           # laenger "running" ohne Ende = Absturz, nicht ewig "laeuft"
+SPEED_BLOCK_EVERY = 300             # Takte
+SPEED_MAX_ENTRIES = 240
 TEMP_DRIVERS = ("coretemp", "k10temp", "zenpower", "cpu_thermal")     # Reihenfolge = Vorrang
 TEMP_LABELS = ("package id 0", "tctl", "tdie", "cpu")
 SYS_EVERY = 5               # Takte (Sekunden) zwischen SYS-Zeilen
@@ -65,7 +74,7 @@ PING_RTT_RE = re.compile(r"= [\d.]+/([\d.]+)/[\d.]+")
 
 # Befehls-Whitelist: Name -> Funktion(argumente) -> Ergebnis-Code.
 # Phase 0: noch keine Befehle. Spaetere Phasen tragen hier ihre festen Befehle ein.
-COMMANDS = {}
+COMMANDS = {}               # wird unten (nach den Funktionen) gefuellt: feste Whitelist
 
 
 def physical_interfaces(sys_net=SYS_NET):
@@ -391,6 +400,107 @@ class Pinger:
         return self.proc is not None
 
 
+def read_speed_state(speed_dir=SPEED_DIR, trigger=SPEED_TRIGGER, now=None):
+    """-> (zustand, cooldown_s, letzter_lauf_ok|None). zustand: running|idle|notinstalled|unavailable."""
+    now = int(time.time() if now is None else now)
+    if not os.path.isdir(speed_dir):
+        return "unavailable", 0, None
+    try:
+        with open(os.path.join(speed_dir, "state.json"), "rb") as fh:
+            d = json.loads(fh.read(MAX_FILE_BYTES))
+        if not isinstance(d, dict):
+            d = {}
+    except (OSError, ValueError):
+        d = {}
+    state = d.get("state")
+    finished = d.get("finished") if isinstance(d.get("finished"), int) else None
+    started = d.get("started") if isinstance(d.get("started"), int) else None
+    if state == "notinstalled":
+        return "notinstalled", 0, None
+    running = state == "running" and started is not None and 0 <= now - started <= SPEED_RUNNING_MAX_S
+    if os.path.exists(trigger):
+        running = True                                  # angefordert, Dienst startet gleich
+    cooldown = max(0, finished + SPEED_MIN_SPACING_S - now) if finished is not None else 0
+    ok = d.get("ok") if isinstance(d.get("ok"), bool) else None
+    return ("running" if running else "idle"), cooldown, ok
+
+
+def speed_state_line(state):
+    st, cooldown, ok = state
+    return f"SPEEDSTATE {st} {cooldown} {'-' if ok is None else int(ok)}"
+
+
+def read_speed_history(speed_dir=SPEED_DIR, now=None):
+    """history.jsonl -> [(alter_s, down_kbit, up_kbit, ping_ms)], aelteste zuerst, validiert."""
+    now = int(time.time() if now is None else now)
+    out = []
+    try:
+        with open(os.path.join(speed_dir, "history.jsonl"), "rb") as fh:
+            raw = fh.read(MAX_FILE_BYTES * 4)
+    except OSError:
+        return out
+    for line in raw.decode("utf-8", "replace").splitlines():
+        try:
+            e = json.loads(line)
+            ts, down, up, ping = int(e["ts"]), int(e["down"]), int(e["up"]), float(e["ping"])
+        except (ValueError, KeyError, TypeError):
+            continue
+        if 0 < down < 10_000_000 and 0 < up < 10_000_000 and 0 <= ping < 10_000 and ts <= now:
+            out.append((now - ts, down, up, round(ping, 1)))
+    return out[-SPEED_MAX_ENTRIES:]
+
+
+def speed_block_lines(speed_dir=SPEED_DIR, now=None):
+    if not os.path.isdir(speed_dir):
+        return ["MISSING SPEED"]
+    return ["BEGIN SPEED 0"] + [f"R {a} {d} {u} {p:.1f}" for a, d, u, p in read_speed_history(speed_dir, now)] + ["END SPEED"]
+
+
+class SpeedReporter:
+    """Speedtest-Zeilen: Zustand alle 5 s, Verlauf nur bei Aenderung der Datei (oder alle 5 min)."""
+
+    def __init__(self, speed_dir=SPEED_DIR, trigger=SPEED_TRIGGER):
+        self.dir, self.trigger, self.mtime = speed_dir, trigger, None
+
+    def state_line(self):
+        return speed_state_line(read_speed_state(self.dir, self.trigger))
+
+    def lines(self, tick, sys_every=SYS_EVERY):
+        out = []
+        if tick % sys_every == 0:
+            out.append(self.state_line())
+        try:
+            mtime = os.stat(os.path.join(self.dir, "history.jsonl")).st_mtime_ns
+        except OSError:
+            mtime = None
+        if self.mtime != mtime or tick % SPEED_BLOCK_EVERY == 0:
+            self.mtime = mtime
+            out.extend(speed_block_lines(self.dir))
+        return out
+
+
+def cmd_speedtest(args, speed_dir=SPEED_DIR, trigger=SPEED_TRIGGER):
+    """Speedtest anfordern: legt nur die Trigger-Datei an; der Test laeuft als eigener Dienst."""
+    if args:
+        return "denied"
+    state, cooldown, _ = read_speed_state(speed_dir, trigger)
+    if state in ("notinstalled", "unavailable"):
+        return state
+    if state == "running":
+        return "busy"
+    if cooldown > 0:
+        return "cooldown"
+    try:
+        with open(trigger, "w"):
+            pass
+    except OSError:
+        return "failed"
+    return "ok"
+
+
+COMMANDS["speedtest"] = cmd_speedtest
+
+
 def handle_command(line):
     """Eine Befehlszeile pruefen. Immer eine CMDRESULT-Zeile als Antwort.
 
@@ -406,7 +516,7 @@ def handle_command(line):
     return f"CMDRESULT {shown} {handler(parts[1:])}"
 
 
-def tick_lines(ifaces, tick, sys_every=SYS_EVERY, guests_every=GUESTS_EVERY):
+def tick_lines(ifaces, tick, sys_every=SYS_EVERY, guests_every=GUESTS_EVERY, speed=None):
     """Alle Zeilen, die in diesem Takt faellig sind (NET immer, SYS/GUESTS seltener)."""
     uptime = read_uptime()
     lines = net_lines(ifaces, uptime)
@@ -418,6 +528,8 @@ def tick_lines(ifaces, tick, sys_every=SYS_EVERY, guests_every=GUESTS_EVERY):
         lines.extend(guests_lines(read_guests()))
         lines.extend(storage_lines(read_storage()))
         lines.extend(smart_lines(read_smart()))
+    if speed is not None:
+        lines.extend(speed.lines(tick, sys_every))
     return lines
 
 
@@ -431,6 +543,7 @@ def run(ifaces, out, in_fd, interval=1.0, once=False, sys_every=SYS_EVERY, guest
 
 
 def _run(ifaces, out, in_fd, interval, once, sys_every, guests_every, pinger):
+    speed = SpeedReporter()
     out.write(f"HELLO homeserver-agent {PROTOCOL}\n")
     out.flush()
     buf = b""
@@ -440,7 +553,7 @@ def _run(ifaces, out, in_fd, interval, once, sys_every, guests_every, pinger):
         now = time.monotonic()
         if now >= next_tick:
             try:
-                for line in tick_lines(ifaces, tick, sys_every, guests_every):
+                for line in tick_lines(ifaces, tick, sys_every, guests_every, speed):
                     out.write(line + "\n")
                 out.flush()
             except BrokenPipeError:
@@ -479,6 +592,7 @@ def _run(ifaces, out, in_fd, interval, once, sys_every, guests_every, pinger):
                 out.write("CMDRESULT ? denied\n")
             else:
                 out.write(handle_command(raw.decode("ascii", "replace")) + "\n")
+                out.write(speed.state_line() + "\n")          # Zustand sofort nachliefern (z. B. "laeuft")
             out.flush()
         if len(buf) > MAX_CMD_BYTES:                # Zeile ohne Ende: verwerfen
             buf = b""

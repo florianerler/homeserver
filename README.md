@@ -13,7 +13,8 @@ einzeln aus, ohne die anderen zu stören.
 | Internet: Ping-Latenz und Paketverlust zu 1.1.1.1 | Agent startet unprivilegiertes `ping` | ✅ |
 | Speicher: Füllstand je Storage (Warnung ab 85 %, kritisch ab 95 %) | Collector (`pvesm status`) | ✅ |
 | SMART: Gesundheit je Platte (nur Warnung bei „FEHLER“) | Collector (`smartctl`) | ✅ |
-| Speedtest, Aktionen | | geplant (Phasen 4–5) |
+| Speedtest auf dem Server: alle 3 h und per Klick, Verlauf 30 Tage | eigener Dienst als `hs-speedtest` | ✅ |
+| Aktionen (qBittorrent, Wake-on-LAN, VPN) | | geplant (Phase 5) |
 
 - **Leiste:** nur das Server-Symbol (ausgegraut, wenn der Host offline ist). Ein kleiner roter Punkt daneben warnt,
   wenn etwas auffällt (aktuell: Ping-Verlust über 2 % oder Latenz über 100 ms).
@@ -58,6 +59,9 @@ G <vmid> <qemu|lxc> <running|stopped|other> <name>
 END GUESTS                               (oder: MISSING GUESTS, wenn der Collector nichts liefert)
 BEGIN STORAGE <alter_s> / S <name> <typ> <active|inactive> <total_kB> <used_kB> / END STORAGE     alle 30 s
 BEGIN SMART <alter_s> / D <gerät> <passed|failed|standby|unknown> <temp_C|-> / END SMART         alle 30 s (Collector prüft alle 10 min)
+SPEEDSTATE <running|idle|notinstalled|unavailable> <cooldown_s> <1|0|->     alle 5 s
+BEGIN SPEED 0 / R <alter_s> <down_kbit> <up_kbit> <ping_ms> / END SPEED     bei neuem Ergebnis, sonst alle 5 min
+CMDRESULT <name> <ok|busy|cooldown|notinstalled|unavailable|failed|denied>   Antwort auf einen Befehl
 PING <uptime> <ziel-ip> <gesendet> <empfangen> <avg_ms|->     alle 5 s (3 Pakete); PINGERR unavailable|failed
 ```
 
@@ -69,7 +73,7 @@ Der Client rechnet Raten selbst aus der **Server-Uptime**-Differenz (nicht aus d
 Netzwerk-Jitter nichts verfälscht). Bei Zähler-Reset, rückwärts laufender Zeit oder großer Lücke wird
 neu aufgesetzt. Ein alter Agent (`traffic-counters.sh`) wird erkannt und als „Server-Agent veraltet"
 gemeldet. Befehle vom Client zum Server laufen über **stdin derselben Verbindung** und müssen auf einer
-festen Whitelist stehen (aktuell: keine). Schließt der Client, meldet der Kernel EOF auf stdin, der Agent
+festen Whitelist stehen (aktuell nur `speedtest`, ohne Argumente). Schließt der Client, meldet der Kernel EOF auf stdin, der Agent
 beendet sich und damit die Sitzung, auch wenn der Client hart abgeschossen wird.
 
 ## Installation
@@ -132,6 +136,26 @@ install -m 600 /tmp/hk ~/.config/homeserver/known_hosts
 
 Der Host-Key ist auf die **in `host =` eingetragene Adresse** gepinnt. Wechselst du auf einen Namen,
 musst du neu pinnen.
+
+## Speedtest
+
+Der Test läuft **auf dem Server** (misst dessen Internetanschluss, nicht den Laptop) als eigener Dienst
+`homeserver-speedtest.service` unter dem Systembenutzer `hs-speedtest` (ohne Login, ohne Shell, ohne sudo),
+gehärtet mit `ProtectSystem=strict`, `NoNewPrivileges`, `PrivateTmp`, Speicher- und Task-Limit.
+
+- **Zeitplan:** `homeserver-speedtest.timer` alle 3 Stunden (mit kleiner Zufallsverzögerung).
+- **Klick auf „Jetzt messen“:** Der Streamer sendet den Befehl `speedtest` über die bestehende SSH-Verbindung.
+  Der Agent prüft ihn gegen seine Whitelist und legt nur eine Trigger-Datei in `/run/homeserver-trigger/` an
+  (Verzeichnis gehört `traffic`, Modus 0700). Eine `.path`-Unit startet daraufhin den Dienst. Es gibt keinen
+  Zugriff auf Befehle oder Argumente von außen.
+- **Schutz vor Dauerfeuer:** `flock` (nur ein Test gleichzeitig) und ein Mindestabstand von 10 Minuten, den
+  Runner **und** Agent prüfen; der Knopf zeigt „läuft…“ bzw. „wieder möglich in …“.
+- **Verlauf:** `/var/lib/homeserver-speedtest/history.jsonl`, 30 Tage, höchstens 300 Messungen. Misslungene Läufe
+  landen nicht im Verlauf, nur im Zustand („letzter Lauf fehlgeschlagen“).
+- **Programm:** wird vom Installer **nicht** installiert. Unterstützt werden das Debian-Paket `speedtest-cli`
+  (`apt install speedtest-cli`, aus der Distribution, keine Fremd-Quelle) und die Ookla-CLI `speedtest`. Fehlt beides,
+  sagt die Karte „Programm auf dem Server nicht installiert“. Beachte: Ein Test verbraucht je nach Anschluss einige
+  hundert MB Datenvolumen; bei 8 Läufen am Tag also schnell mehrere GB im Monat.
 
 ## Schnittstelle: `nic0` oder `vmbr0`
 
@@ -210,6 +234,8 @@ python3 -I plugin/homeserver.py --count 5   # Streamer einzeln ansehen
 | `offline · unerwartete Agent-Antwort` | Protokollversion passt nicht → Agent und Client auf denselben Stand bringen |
 | Gäste: `Collector auf dem Server liefert nicht` | `systemctl status homeserver-collector`, `journalctl -u homeserver-collector -n 20` auf dem Server |
 | Speicher/SMART: `Collector auf dem Server liefert nicht` | `journalctl -u homeserver-collector`; `smartctl` installiert? (`apt install smartmontools`, nur auf Wunsch) |
+| Speedtest: `Programm auf dem Server nicht installiert` | `apt install speedtest-cli` (nur wenn gewünscht), danach `systemctl start homeserver-speedtest` |
+| Speedtest: Knopf bleibt grau | läuft gerade oder Mindestabstand 10 min; `journalctl -u homeserver-speedtest -n 20` |
 | Internet: `ping auf dem Server nicht nutzbar` | als `traffic` testen: `su -s /bin/sh traffic -c 'ping -c1 1.1.1.1'` (Rechte/`ping_group_range`) |
 | `offline · Schnittstelle auf dem Server nicht gefunden` | `main_iface` fehlt in `/etc/homeserver/agent.conf` (`interfaces`) |
 | `offline · Login abgelehnt` (qBittorrent) | Benutzer/Passwort in `config.ini`; bei Dauerfehlern sperrt qBittorrent die IP zeitweise |

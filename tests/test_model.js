@@ -1,7 +1,7 @@
 // Test fuer plugin/Model.js:  node tests/test_model.js
 const fs = require("fs"), path = require("path"), assert = require("assert")
 const src = fs.readFileSync(path.join(__dirname, "..", "plugin", "Model.js"), "utf8").replace(/^\.pragma library$/m, "")
-const M = new Function(src + "; return { scale, format, push, peak, parseSample, summarize, uptimeText, memUsedFraction, anyWarn, sizeText }")()
+const M = new Function(src + "; return { scale, format, push, peak, parseSample, summarize, uptimeText, memUsedFraction, anyWarn, sizeText, mbitText, ageText, speedStats }")()
 const fmt = (v, d) => v.toFixed(d)
 
 assert.strictEqual(M.format(0, fmt), "0 B/s")
@@ -102,4 +102,25 @@ console.log("Model.js: alle Tests ok")
   assert.strictEqual(M.sizeText(1048576, f), "1.0 GB"); assert.strictEqual(M.sizeText(1048576 * 2048, f), "2.0 TB")
   assert.strictEqual(M.sizeText(-5, f), "0.0 GB")
   console.log("Model.js Phase 3: ok")
+})()
+
+;(function () {
+  const mk = (speed) => M.parseSample(JSON.stringify({ v: 2, cards: { net: {}, qbt: {}, speed } })).speed
+  const sp = mk({ ok: true, state: "online", running: true, cooldown: 99999999, lastOk: false, lastCmd: "cooldown",
+                  history: [{ age: 7200, down: 480000, up: 52000, ping: 12 }, { age: 60, down: 0, up: 5, ping: 1 }, "x", null,
+                            { age: 10, down: 500000, up: 60000, ping: 10 }] })
+  assert.strictEqual(sp.running, true); assert.strictEqual(sp.cooldown, 86400); assert.strictEqual(sp.lastOk, false)
+  assert.strictEqual(sp.lastCmd, "cooldown"); assert.strictEqual(sp.history.length, 2)          // unplausible/kaputte verworfen
+  assert.strictEqual(mk({ ok: true, lastCmd: "rm -rf" }).lastCmd, null)
+  assert.strictEqual(mk({ ok: true }).history.length, 0)
+  assert.strictEqual(mk({ ok: true, history: new Array(500).fill({ age: 1, down: 5, up: 5, ping: 1 }) }).history.length, 300)
+  const f = (v, d) => v.toFixed(d)
+  assert.strictEqual(M.mbitText(480000, f), "480 Mbit/s"); assert.strictEqual(M.mbitText(52000, f), "52.0 Mbit/s")
+  assert.strictEqual(M.mbitText(1200000, f), "1.20 Gbit/s"); assert.strictEqual(M.mbitText(-1, f), "0.0 Mbit/s")
+  assert.strictEqual(M.ageText(30), "1 min"); assert.strictEqual(M.ageText(300), "5 min"); assert.strictEqual(M.ageText(7300), "2 h")
+  assert.strictEqual(M.ageText(200000), "2 d"); assert.strictEqual(M.ageText(-5), "1 min")
+  assert.deepStrictEqual(M.speedStats([]), { n: 0, down: 0, up: 0, ping: 0 })
+  assert.strictEqual(M.speedStats([{ down: 100, up: 10, ping: 10 }, { down: 300, up: 30, ping: 20 }]).down, 200)
+  assert.strictEqual(M.anyWarn({ speed: sp }), false)                                           // Speedtest warnt nie
+  console.log("Model.js Phase 4: ok")
 })()

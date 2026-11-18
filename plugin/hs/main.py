@@ -4,6 +4,7 @@ import json
 import os
 import signal
 import sys
+import threading
 import time
 
 from . import config as cfgmod
@@ -12,6 +13,19 @@ from .base import StaticFailure
 from .qbt_source import QbtSource
 
 SNAPSHOT_VERSION = 2
+
+
+# Befehle, die die Oberflaeche (ueber stdin des Streamers) senden darf. Exakte Namen, keine Argumente.
+# Der Server prueft zusaetzlich seine eigene Whitelist.
+UI_COMMANDS = frozenset({"speedtest"})
+
+
+def control_loop(agent, stream):
+    """Zeilen von stdin lesen und nur Whitelist-Befehle an den Server weiterreichen."""
+    for line in stream:
+        line = line.strip()
+        if line in UI_COMMANDS:
+            agent.send(line)
 
 
 def main(argv=None):
@@ -25,7 +39,7 @@ def main(argv=None):
         sources = (AgentSource(cfg), QbtSource(cfg))
     except cfgmod.ConfigError as e:
         print(f"homeserver: {e}", file=sys.stderr)
-        sources = (StaticFailure(str(e), ("net", "system", "guests", "ping", "storage", "smart")), StaticFailure(str(e), ("qbt",)))
+        sources = (StaticFailure(str(e), ("net", "system", "guests", "ping", "storage", "smart", "speed")), StaticFailure(str(e), ("qbt",)))
 
     def shutdown(*_):
         for s in sources:
@@ -36,6 +50,9 @@ def main(argv=None):
     signal.signal(signal.SIGINT, shutdown)
     for s in sources:
         s.start()
+    agents = [s for s in sources if isinstance(s, AgentSource)]
+    if agents and not args.count:
+        threading.Thread(target=control_loop, args=(agents[0], sys.stdin), daemon=True).start()
 
     emitted = 0
     try:

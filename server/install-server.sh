@@ -27,9 +27,20 @@ chown -R root:root /home/traffic/.ssh
 chmod 755 /home/traffic/.ssh
 chmod 644 /home/traffic/.ssh/authorized_keys
 
+# Speedtest: eigener unprivilegierter Benutzer, Runner, Timer (alle 3 h) und Trigger-Pfad (Klick im Popup).
+# Das Speedtest-PROGRAMM selbst wird hier NICHT installiert (siehe Hinweis unten).
+id hs-speedtest >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin hs-speedtest
+install -m 755 -o root -g root "$SRC/speedtest-run.py" "$LIB/speedtest-run.py"
+for u in homeserver-speedtest.service homeserver-speedtest.timer homeserver-speedtest.path; do
+  install -m 644 -o root -g root "$SRC/$u" "/etc/systemd/system/$u"
+done
+install -m 644 -o root -g root "$SRC/homeserver-tmpfiles.conf" /etc/tmpfiles.d/homeserver.conf
+systemd-tmpfiles --create /etc/tmpfiles.d/homeserver.conf
+
 # Collector (root, feste Befehle) starten bzw. neu starten, damit neuer Code gilt.
 systemctl daemon-reload
 systemctl enable homeserver-collector.service >/dev/null 2>&1
+systemctl enable --now homeserver-speedtest.timer homeserver-speedtest.path >/dev/null 2>&1
 systemctl restart homeserver-collector.service
 echo "== Collector: warte auf die erste Gaeste-Datei ..."
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
@@ -56,6 +67,16 @@ for f, key in (("storage", "storages"), ("smart", "disks")):
     except (OSError, ValueError, KeyError):
         print(f"WARNUNG: /run/homeserver/{f}.json fehlt (journalctl -u homeserver-collector -n 20)")
 PY
+
+echo "== Speedtest-Programm:"
+if [ -x /usr/bin/speedtest ] || [ -x /usr/local/bin/speedtest ]; then
+  echo "Ookla-speedtest gefunden."
+elif [ -x /usr/bin/speedtest-cli ]; then
+  echo "speedtest-cli gefunden."
+else
+  echo "NICHT installiert. Die Speedtest-Karte zeigt dann 'Programm nicht installiert'."
+  echo "Installieren (nur wenn du das willst): apt install speedtest-cli   (Debian-Paket, keine Fremd-Quelle)"
+fi
 
 echo "== Selbsttest als Benutzer traffic (ein Takt):"
 su -s /bin/sh traffic -c "python3 $LIB/agent.py --once" || { echo "Selbsttest FEHLGESCHLAGEN" >&2; exit 1; }

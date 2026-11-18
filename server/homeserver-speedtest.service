@@ -1,0 +1,31 @@
+[Unit]
+Description=Homeserver speedtest (einmaliger Lauf, unprivilegierter Benutzer)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hs-speedtest
+Group=hs-speedtest
+StateDirectory=homeserver-speedtest
+StateDirectoryMode=0755
+Environment=HOME=/var/lib/homeserver-speedtest
+# '+' = Dieser eine Befehl laeuft mit Root-Rechten ausserhalb der Sandbox: Trigger-Datei entfernen,
+# damit die .path-Unit nicht erneut ausloest. Der Test selbst laeuft unprivilegiert.
+ExecStartPre=+/bin/rm -f /run/homeserver-trigger/speedtest
+ExecStart=/usr/bin/python3 /usr/local/lib/homeserver/speedtest-run.py
+TimeoutStartSec=200
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+MemoryMax=256M
+TasksMax=64

@@ -125,6 +125,48 @@ function parseSmart(s, base) {
   return base
 }
 
+// Speedtest-Karte: Zustand, Abstand bis zum naechsten Klick, Verlauf (max. 300 Messungen).
+function parseSpeed(s, base) {
+  base.running = s.running === true
+  base.cooldown = Math.min(86400, Math.floor(clean(s.cooldown)))
+  base.lastOk = typeof s.lastOk === "boolean" ? s.lastOk : null
+  base.lastCmd = ["ok", "busy", "cooldown", "notinstalled", "unavailable", "failed", "denied"].indexOf(s.lastCmd) >= 0 ? s.lastCmd : null
+  base.history = []
+  if (Array.isArray(s.history)) {
+    for (var i = Math.max(0, s.history.length - 300); i < s.history.length; i++) {
+      var h = s.history[i]
+      if (!h || typeof h !== "object") continue
+      var down = clean(h.down), up = clean(h.up)
+      if (down <= 0 || up <= 0) continue
+      base.history.push({ age: Math.floor(clean(h.age)), down: down, up: up, ping: clean(h.ping) })
+    }
+  }
+  return base
+}
+
+// kbit/s als "480 Mbit/s" / "1,2 Gbit/s".
+function mbitText(kbit, fmtNumber) {
+  kbit = clean(kbit)
+  if (kbit >= 1000000) return fmtNumber(kbit / 1000000, 2) + " Gbit/s"
+  var m = kbit / 1000
+  return fmtNumber(m, m >= 100 ? 0 : 1) + " Mbit/s"
+}
+
+// Alter in Sekunden als "5 min" / "3 h" / "2 d".
+function ageText(sec) {
+  sec = Math.max(0, Math.floor(clean(sec)))
+  if (sec >= 86400) return Math.floor(sec / 86400) + " d"
+  if (sec >= 3600) return Math.floor(sec / 3600) + " h"
+  return Math.max(1, Math.floor(sec / 60)) + " min"
+}
+
+// Mittelwerte ueber den ganzen Verlauf: { n, down, up, ping } (0 bei leerem Verlauf).
+function speedStats(history) {
+  var n = history.length, d = 0, u = 0, p = 0
+  for (var i = 0; i < n; i++) { d += history[i].down; u += history[i].up; p += history[i].ping }
+  return n ? { n: n, down: d / n, up: u / n, ping: p / n } : { n: 0, down: 0, up: 0, ping: 0 }
+}
+
 // kB (KiB) als "98,5 GB" / "1,2 TB".
 function sizeText(kb, fmtNumber) {
   kb = clean(kb)
@@ -179,6 +221,7 @@ function parseSample(line) {
     if (base.ok && name === "system") base = parseSystem(raw, base)
     else if (base.ok && name === "guests") base = parseGuests(raw, base)
     else if (base.ok && name === "ping") base = parsePing(raw, base)
+    else if (base.ok && name === "speed") base = parseSpeed(raw, base)
     else if (base.ok && name === "storage") base = parseStorage(raw, base)
     else if (base.ok && name === "smart") base = parseSmart(raw, base)
     out[name] = base

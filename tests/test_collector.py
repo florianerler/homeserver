@@ -97,8 +97,13 @@ class Tasks(unittest.TestCase):
         self.assertNotIn("HOME", out)                              # minimale Umgebung
 
 
-SCAN = open(os.path.join(os.path.dirname(__file__), "fixtures", "smartctl_scan.txt")).read()
-PVESM = open(os.path.join(os.path.dirname(__file__), "fixtures", "pvesm_status.txt")).read()
+def _fixture(name):
+    with open(os.path.join(os.path.dirname(__file__), "fixtures", name)) as fh:
+        return fh.read()
+
+
+SCAN = _fixture("smartctl_scan.txt")
+PVESM = _fixture("pvesm_status.txt")
 
 
 class Storage(unittest.TestCase):

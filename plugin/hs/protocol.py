@@ -24,7 +24,9 @@ IFACE_RE = re.compile(r"^[A-Za-z0-9._-]{1,15}$")
 NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
 MAX_GUESTS = 64
 MAX_SECTION_ITEMS = 64
-SECTIONS = ("GUESTS", "STORAGE", "SMART")      # Bloecke: BEGIN <name> <alter> ... END <name>
+SECTIONS = ("GUESTS", "STORAGE", "SMART", "SPEED")      # Bloecke: BEGIN <name> <alter> ... END <name>
+TOKEN_RE = re.compile(r"^[A-Za-z0-9._:-]{1,32}$")
+CMD_RESULTS = ("ok", "busy", "cooldown", "notinstalled", "unavailable", "failed", "denied")
 KIND_RE = re.compile(r"^[A-Za-z0-9._-]{1,16}$")
 DEV_RE = re.compile(r"^[a-z0-9]{1,16}$")
 MAX_GAP_S = 5.0     # groesserer Zeitsprung zwischen Zaehlerstaenden -> neu aufsetzen
@@ -90,6 +92,14 @@ def parse_line(line):
         return None
     if kind in ("END", "MISSING"):
         return (kind, parts[1]) if len(parts) == 2 and parts[1] in SECTIONS else None
+    if kind == "SPEEDSTATE":
+        return _parse_speedstate(parts)
+    if kind == "R":
+        return _parse_speed_result(parts)
+    if kind == "CMDRESULT":
+        if len(parts) == 3 and TOKEN_RE.match(parts[1]) and parts[2] in CMD_RESULTS:
+            return "CMDRESULT", (parts[1], parts[2])
+        return None
     if kind == "S":
         return _parse_storage(parts)
     if kind == "D":
@@ -122,6 +132,24 @@ def _parse_disk(parts):
             return None
         temp = int(parts[3])
     return "D", (parts[1], parts[2], temp)
+
+
+def _parse_speedstate(parts):
+    if len(parts) != 4 or parts[1] not in ("running", "idle", "notinstalled", "unavailable") \
+            or not parts[2].isdigit() or int(parts[2]) > 86400 or parts[3] not in ("0", "1", "-"):
+        return None
+    return "SPEEDSTATE", {"state": parts[1], "cooldown": int(parts[2]),
+                          "ok": None if parts[3] == "-" else parts[3] == "1"}
+
+
+def _parse_speed_result(parts):
+    if len(parts) != 5 or not all(p.isdigit() for p in parts[1:4]):
+        return None
+    age, down, up = int(parts[1]), int(parts[2]), int(parts[3])
+    ping = _number(parts[4])
+    if ping is None or not (0 < down < 10_000_000 and 0 < up < 10_000_000 and 0 <= ping < 10_000 and age < 10 * 365 * 86400):
+        return None
+    return "R", (age, down, up, ping)
 
 
 def _parse_ping(parts):

@@ -61,5 +61,22 @@
   "smart.passed": "OK",
   "smart.failed": "FEHLER",
   "smart.standby": "Standby (nicht geweckt)",
-  "smart.unknown": "unbekannt"
+  "smart.unknown": "unbekannt",
+  "speed": "Speedtest (Server)",
+  "speed.run": "Jetzt messen",
+  "speed.running": "läuft…",
+  "speed.wait": "wieder möglich in %1",
+  "speed.none": "noch keine Messung",
+  "speed.last": "zuletzt vor %1",
+  "speed.avg": "Ø aus %1 Messungen (30 Tage): ↓ %2  ↑ %3  %4 ms",
+  "speed.failed": "letzter Lauf fehlgeschlagen",
+  "speed.cmd.ok": "Messung angefordert",
+  "speed.cmd.busy": "läuft bereits",
+  "speed.cmd.cooldown": "zu früh, bitte warten",
+  "speed.cmd.notinstalled": "Programm nicht installiert",
+  "speed.cmd.unavailable": "Speedtest-Dienst fehlt",
+  "speed.cmd.failed": "Anfordern fehlgeschlagen",
+  "speed.cmd.denied": "abgelehnt",
+  "err.speed-notinstalled": "Programm auf dem Server nicht installiert",
+  "err.speed-unavailable": "Speedtest-Dienst auf dem Server fehlt"
 }

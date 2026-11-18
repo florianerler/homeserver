@@ -207,6 +207,78 @@ class StorageSmart(unittest.TestCase):
             self.assertEqual(agent.read_smart(p), ("missing",))
 
 
+class Speedtest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = os.path.join(self.tmp.name, "st")
+        os.mkdir(self.dir)
+        self.trigger = os.path.join(self.tmp.name, "trigger")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def state(self, obj):
+        write(os.path.join(self.dir, "state.json"), json.dumps(obj))
+
+    def test_state_variants(self):
+        now = 10000
+        self.assertEqual(agent.read_speed_state(os.path.join(self.tmp.name, "nope"), self.trigger, now), ("unavailable", 0, None))
+        self.assertEqual(agent.read_speed_state(self.dir, self.trigger, now), ("idle", 0, None))      # noch nie gelaufen
+        self.state({"state": "notinstalled", "finished": 1})
+        self.assertEqual(agent.read_speed_state(self.dir, self.trigger, now)[0], "notinstalled")
+        self.state({"state": "idle", "finished": now - 100, "ok": True})
+        self.assertEqual(agent.read_speed_state(self.dir, self.trigger, now), ("idle", 500, True))    # 10 min Abstand
+        self.state({"state": "idle", "finished": now - 700, "ok": False})
+        self.assertEqual(agent.read_speed_state(self.dir, self.trigger, now), ("idle", 0, False))
+        self.state({"state": "running", "started": now - 20, "finished": None})
+        self.assertEqual(agent.read_speed_state(self.dir, self.trigger, now)[0], "running")
+        self.state({"state": "running", "started": now - 5000})                                      # haengengeblieben
+        self.assertEqual(agent.read_speed_state(self.dir, self.trigger, now)[0], "idle")
+        write(os.path.join(self.dir, "state.json"), "{kaputt")
+        self.assertEqual(agent.read_speed_state(self.dir, self.trigger, now)[0], "idle")
+        write(self.trigger, "")
+        self.assertEqual(agent.read_speed_state(self.dir, self.trigger, now)[0], "running")          # angefordert
+
+    def test_command_creates_trigger_only_when_allowed(self):
+        self.assertEqual(agent.cmd_speedtest([], self.dir, self.trigger), "ok")
+        self.assertTrue(os.path.exists(self.trigger))
+        self.assertEqual(agent.cmd_speedtest([], self.dir, self.trigger), "busy")          # schon angefordert
+        os.unlink(self.trigger)
+        self.state({"state": "idle", "finished": int(time.time()) - 60, "ok": True})
+        self.assertEqual(agent.cmd_speedtest([], self.dir, self.trigger), "cooldown")
+        self.assertFalse(os.path.exists(self.trigger))
+        self.assertEqual(agent.cmd_speedtest(["x"], self.dir, self.trigger), "denied")
+        self.assertEqual(agent.cmd_speedtest([], os.path.join(self.tmp.name, "nope"), self.trigger), "unavailable")
+        self.state({"state": "notinstalled", "finished": 1})
+        self.assertEqual(agent.cmd_speedtest([], self.dir, self.trigger), "notinstalled")
+        self.state({"state": "idle", "finished": 1, "ok": True})
+        self.assertEqual(agent.cmd_speedtest([], self.dir, "/nicht/da/trigger"), "failed")
+
+    def test_history_is_validated_and_limited(self):
+        now = 100000
+        lines = [json.dumps({"ts": now - 7200, "down": 480000, "up": 52000, "ping": 12.34}), "muell",
+                 json.dumps({"ts": now - 10, "down": 0, "up": 5, "ping": 1}),            # down 0: unplausibel
+                 json.dumps({"ts": now + 999, "down": 1, "up": 1, "ping": 1}),            # Zukunft
+                 json.dumps({"ts": now - 60, "down": 500000, "up": 60000, "ping": 9.0})]
+        write(os.path.join(self.dir, "history.jsonl"), "\n".join(lines) + "\n")
+        hist = agent.read_speed_history(self.dir, now)
+        self.assertEqual(hist, [(7200, 480000, 52000, 12.3), (60, 500000, 60000, 9.0)])
+        self.assertEqual(agent.speed_block_lines(self.dir, now),
+                         ["BEGIN SPEED 0", "R 7200 480000 52000 12.3", "R 60 500000 60000 9.0", "END SPEED"])
+        self.assertEqual(agent.speed_block_lines(os.path.join(self.tmp.name, "nope")), ["MISSING SPEED"])
+
+    def test_reporter_sends_block_only_on_change(self):
+        rep = agent.SpeedReporter(self.dir, self.trigger)
+        first = rep.lines(0)
+        self.assertTrue(first[0].startswith("SPEEDSTATE") and "BEGIN SPEED 0" in first)
+        again = rep.lines(5)
+        self.assertEqual([l.split()[0] for l in again], ["SPEEDSTATE"])                   # Verlauf unveraendert: nicht erneut
+        write(os.path.join(self.dir, "history.jsonl"), json.dumps({"ts": int(time.time()), "down": 1000, "up": 1000, "ping": 1}) + "\n")
+        changed = rep.lines(6)
+        self.assertEqual(changed[0].split()[0], "BEGIN")                                  # neue Datei -> sofort senden
+        self.assertEqual([l.split()[0] for l in rep.lines(300)][-3:], ["BEGIN", "R", "END"])   # Auffrischen nach 5 min
+
+
 class Schedule(unittest.TestCase):
     def test_slow_data_is_sent_less_often(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -350,9 +422,11 @@ class PingerTests(unittest.TestCase):
 
 
 class Commands(unittest.TestCase):
-    def test_everything_denied_without_whitelist(self):
-        self.assertEqual(agent.handle_command("speedtest"), "CMDRESULT speedtest denied")
+    def test_only_fixed_whitelist_is_known(self):
+        self.assertEqual(set(agent.COMMANDS), {"speedtest"})                 # alles andere ist verboten
         self.assertEqual(agent.handle_command("rm -rf /"), "CMDRESULT rm denied")
+        self.assertEqual(agent.handle_command("reboot"), "CMDRESULT reboot denied")
+        self.assertEqual(agent.handle_command("speedtest extra"), "CMDRESULT speedtest denied")   # keine freien Argumente
 
     def test_hostile_name_is_not_echoed(self):
         self.assertEqual(agent.handle_command("$(reboot)"), "CMDRESULT ? denied")

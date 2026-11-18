@@ -27,9 +27,12 @@ PING_WARN_AVG_MS = 100.0
 COLLECTOR_MAX_AGE_S = 120
 SMART_MAX_AGE_S = 1800      # Collector prueft SMART alle 10 min
 STORAGE_WARN_PCT = 85.0
-SECTION_CARD = {"GUESTS": "guests", "STORAGE": "storage", "SMART": "smart"}
-SECTION_LINE = {"GUESTS": "G", "STORAGE": "S", "SMART": "D"}
-SECTION_MAX_AGE_S = {"GUESTS": COLLECTOR_MAX_AGE_S, "STORAGE": COLLECTOR_MAX_AGE_S, "SMART": SMART_MAX_AGE_S}   # aelter -> der Collector auf dem Server liefert nicht mehr
+SECTION_CARD = {"GUESTS": "guests", "STORAGE": "storage", "SMART": "smart", "SPEED": "speed"}
+SECTION_LINE = {"GUESTS": "G", "STORAGE": "S", "SMART": "D", "SPEED": "R"}
+SECTION_MAX_AGE_S = {"GUESTS": COLLECTOR_MAX_AGE_S, "STORAGE": COLLECTOR_MAX_AGE_S, "SMART": SMART_MAX_AGE_S,
+                     "SPEED": COLLECTOR_MAX_AGE_S}
+SPEED_STALE_S = 20.0        # Agent sendet SPEEDSTATE alle 5 s
+CMD_FEEDBACK_S = 15.0       # so lange wird das Ergebnis eines Befehls im Snapshot gezeigt   # aelter -> der Collector auf dem Server liefert nicht mehr
 CMD_RE = re.compile(r"^[ -~]{1,128}$")      # druckbares ASCII, begrenzte Laenge
 
 
@@ -44,7 +47,12 @@ class AgentSource(Source):
         self.send_lock = threading.Lock()
         self.extra = {"system": CardState(SYSTEM_STALE_S), "guests": CardState(GUESTS_STALE_S),
                       "ping": CardState(PING_STALE_S),
-                      "storage": CardState(GUESTS_STALE_S), "smart": CardState(GUESTS_STALE_S)}
+                      "storage": CardState(GUESTS_STALE_S), "smart": CardState(GUESTS_STALE_S),
+                      "speed": CardState(SPEED_STALE_S)}
+        self.speed_state = None         # letzter SPEEDSTATE
+        self.speed_history = []         # letzter SPEED-Block: [{age, down, up, ping}]
+        self.speed_history_at = 0.0     # time.monotonic() des Blocks (Alter wird fortgeschrieben)
+        self.last_cmd = {}              # Befehl -> (Ergebnis, monotonic)
         self.ping_window = collections.deque(maxlen=PING_WINDOW)
         self.ping_history = collections.deque(maxlen=PING_HISTORY)
 
@@ -127,6 +135,14 @@ class AgentSource(Source):
             if not parsed:
                 continue
             kind = parsed[0]
+            if kind == "SPEEDSTATE":
+                self.speed_state = parsed[1]
+                self._publish_speed()
+                continue
+            if kind == "CMDRESULT":
+                self.last_cmd[parsed[1][0]] = (parsed[1][1], time.monotonic())
+                self._publish_speed()
+                continue
             if kind == "PING":
                 self._publish_ping(parsed[1])
                 continue
@@ -137,7 +153,7 @@ class AgentSource(Source):
             if kind == "SYS":
                 self._publish_system(parsed[1])
                 continue
-            if kind in ("BEGIN", "G", "S", "D", "END", "MISSING"):
+            if kind in ("BEGIN", "G", "S", "D", "R", "END", "MISSING"):
                 block = self._block(block, kind, parsed[1])
                 continue
             if kind != "NET":
@@ -167,6 +183,25 @@ class AgentSource(Source):
                 got = True
         return None if got else ""
 
+    def _publish_speed(self):
+        """SPEEDSTATE und Verlauf zu einer Karte zusammenfuehren (kommen getrennt, in eigenem Takt)."""
+        st, card = self.speed_state, self.extra["speed"]
+        if st is None:
+            return
+        if st["state"] in ("notinstalled", "unavailable"):
+            card.fail("speed-" + st["state"])
+            card.invalidate()
+            return
+        now = time.monotonic()
+        drift = int(now - self.speed_history_at) if self.speed_history_at else 0
+        history = [dict(h, age=h["age"] + drift) for h in self.speed_history]
+        last_cmd = None
+        res = self.last_cmd.get("speedtest")
+        if res and now - res[1] < CMD_FEEDBACK_S:
+            last_cmd = res[0]
+        card.publish({"state": "online", "running": st["state"] == "running", "cooldown": st["cooldown"],
+                      "lastOk": st["ok"], "history": history, "lastCmd": last_cmd})
+
     def _publish_ping(self, d):
         self.ping_window.append((d["sent"], d["recv"]))
         self.ping_history.append(d["avg_ms"])
@@ -193,7 +228,7 @@ class AgentSource(Source):
         if kind == "MISSING":
             self._section_fail(data)
             return None
-        if kind in ("G", "S", "D"):
+        if kind in ("G", "S", "D", "R"):
             if block is not None and SECTION_LINE.get(block["name"]) == kind \
                     and len(block["items"]) < protocol.MAX_SECTION_ITEMS:
                 block["items"].append(data)
@@ -203,6 +238,10 @@ class AgentSource(Source):
         return None
 
     def _section_fail(self, section):
+        if section == "SPEED":                      # kein Verlauf vorhanden: leerer Verlauf, kein Fehler
+            self.speed_history, self.speed_history_at = [], time.monotonic()
+            self._publish_speed()
+            return
         card = self.extra[SECTION_CARD[section]]
         card.fail("collector-offline")
         card.invalidate()
@@ -213,6 +252,11 @@ class AgentSource(Source):
             self._section_fail(name)
             return
         items = block["items"]
+        if name == "SPEED":
+            self.speed_history = [{"age": a, "down": d, "up": u, "ping": p} for a, d, u, p in block["items"]]
+            self.speed_history_at = time.monotonic()
+            self._publish_speed()
+            return
         card = self.extra[SECTION_CARD[name]]
         base = {"state": "online", "age": block["age"]}
         if name == "GUESTS":

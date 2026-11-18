@@ -1,0 +1,9 @@
+[Unit]
+Description=Homeserver speedtest auf Anforderung (Trigger-Datei)
+
+[Path]
+PathExists=/run/homeserver-trigger/speedtest
+Unit=homeserver-speedtest.service
+
+[Install]
+WantedBy=multi-user.target

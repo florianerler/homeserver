@@ -26,6 +26,7 @@ Panel {
   property var system: ({ ok: false, state: "connecting", error: "connecting" })
   property var guests: ({ ok: false, state: "connecting", error: "connecting" })
   property var ping: ({ ok: false, state: "connecting", error: "connecting" })
+  property var speed: ({ ok: false, state: "connecting", error: "connecting" })
   property var storage: ({ ok: false, state: "connecting", error: "connecting" })
   property var smart: ({ ok: false, state: "connecting", error: "connecting" })
   property var netRxHistory: []
@@ -45,6 +46,7 @@ Panel {
     if (sample.ping) ping = sample.ping
     if (sample.storage) storage = sample.storage
     if (sample.smart) smart = sample.smart
+    if (sample.speed) speed = sample.speed
     // Offline-Zeitraeume als 0 im Verlauf, damit die Zeitachse weiterlaeuft.
     netRxHistory = Model.push(netRxHistory, net.ok ? net.rx : 0, historyLength)
     netTxHistory = Model.push(netTxHistory, net.ok ? net.tx : 0, historyLength)
@@ -65,7 +67,7 @@ Panel {
   }
 
   // Gesamtstatus fuer die Kopfzeile (alle Karten).
-  readonly property var summary: Model.summarize({ net: net, qbt: qbt, system: system, guests: guests, ping: ping, storage: storage, smart: smart })
+  readonly property var summary: Model.summarize({ net: net, qbt: qbt, system: system, guests: guests, ping: ping, storage: storage, smart: smart, speed: speed })
   readonly property string summaryText: {
     var s = summary
     if (s.kind === "allOk") return strings.t("hero.allOk")
@@ -92,9 +94,14 @@ Panel {
     id: streamer
     command: ["python3", "-I", root.pluginDir + "/homeserver.py"]
     running: true
+    // stdin: Befehle der Oberflaeche an den Streamer (der reicht nur Whitelist-Namen an den Server weiter)
+    stdinEnabled: true
     stdout: SplitParser { onRead: function(line) { root.ingest(line) } }
     // Endet er (Absturz), wird er nach kurzer Pause neu gestartet.
     onExited: restartTimer.restart()
+  }
+  function command(name) {
+    if (/^[a-z]{1,16}$/.test(name) && streamer.running) streamer.write(name + "\n")
   }
   Timer {
     id: restartTimer
@@ -256,6 +263,16 @@ Panel {
           info: root.ping
           tr: strings
           statusText: root.statusOf(root.ping)
+        }
+
+        PanelSeparator { width: parent.width }
+
+        SpeedCard {
+          width: parent.width
+          info: root.speed
+          tr: strings
+          statusText: root.statusOf(root.speed)
+          onRunRequested: root.command("speedtest")
         }
 
         PanelSeparator { width: parent.width }
