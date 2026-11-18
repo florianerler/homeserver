@@ -124,7 +124,7 @@ def parse_smart_health(text):
         return "unknown", None
     temp = None
     t = d.get("temperature")
-    if isinstance(t, dict) and isinstance(t.get("current"), (int, float)) and -50 < t["current"] < 150:
+    if isinstance(t, dict) and isinstance(t.get("current"), (int, float)) and 0 < t["current"] < 150:   # 0 = kein Sensor
         temp = int(t["current"])
     passed = (d.get("smart_status") or {}).get("passed") if isinstance(d.get("smart_status"), dict) else None
     if passed is True:
@@ -146,7 +146,8 @@ def collect_smart(run=run_fixed, run_rc=run_smartctl):
     disks = []
     smartctl = fixed_bin("smartctl")
     for dev, dtype in parse_smart_scan(run([smartctl, "--scan"])):
-        types = [dtype] + (["sat"] if dtype == "scsi" else [])       # SATA hinter SCSI-Schicht: -d sat probieren
+        # SATA-Platten melden sich als "scsi": -d sat liefert die echten Werte (Temperatur), scsi bleibt Fallback.
+        types = ["sat", "scsi"] if dtype == "scsi" else [dtype]
         status, temp = "unknown", None
         for t in types:
             status, temp = parse_smart_health(run_rc([smartctl, "-j", "-H", "-A", "-n", "standby", "-d", t, dev]))

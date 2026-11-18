@@ -131,6 +131,7 @@ class Smart(unittest.TestCase):
         standby = json.dumps({"smartctl": {"messages": [{"string": "Device is in STANDBY mode, exit(2)"}], "exit_status": 2}})
         self.assertEqual(collector.parse_smart_health(ok), ("passed", 34))
         self.assertEqual(collector.parse_smart_health(bad), ("failed", None))
+        self.assertEqual(collector.parse_smart_health(json.dumps({"smart_status": {"passed": True}, "temperature": {"current": 0}})), ("passed", None))
         self.assertEqual(collector.parse_smart_health(standby), ("standby", None))
         for junk in ["", "kein json", "[1]", "{}", json.dumps({"smart_status": "x"}),
                      json.dumps({"smart_status": {"passed": True}, "temperature": {"current": 9999}})][:5]:
@@ -146,8 +147,8 @@ class Smart(unittest.TestCase):
         def run_rc(argv, timeout=20):
             calls.append(argv)
             dev, t = argv[-1], argv[argv.index("-d") + 1]
-            if dev == "/dev/sda" and t == "scsi":
-                return "{}"                                    # unbekannt -> sat probieren
+            if dev == "/dev/sda" and t == "sat":
+                return "{}"                                    # sat unbekannt -> scsi als Fallback
             return json.dumps({"smart_status": {"passed": dev != "/dev/sdb"}, "temperature": {"current": 30}})
         res = collector.collect_smart(run, run_rc)
         by = {d["dev"]: d["status"] for d in res["disks"]}
@@ -156,7 +157,9 @@ class Smart(unittest.TestCase):
             self.assertEqual(argv[1:6], ["-j", "-H", "-A", "-n", "standby"])
             self.assertIn(argv[argv.index("-d") + 1], collector.SMART_TYPES)
             self.assertRegex(argv[-1], collector.DEV_RE.pattern)
-        self.assertTrue(any(a[argv_i] == "sat" for a in calls for argv_i in [a.index("-d") + 1] if a[-1] == "/dev/sda"))
+        sda_types = [a[a.index("-d") + 1] for a in calls if a[-1] == "/dev/sda"]
+        self.assertEqual(sda_types, ["sat", "scsi"])                # erst sat, dann scsi
+        self.assertEqual([a[a.index("-d") + 1] for a in calls if a[-1] == "/dev/sdb"], ["sat"])   # Treffer: kein Fallback
 
     def test_smartctl_exit_code_is_not_an_error(self):
         out = collector.run_smartctl([sys.executable, "-c", "print('{}'); raise SystemExit(4)"])
