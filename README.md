@@ -40,6 +40,7 @@ server/homeserver-tmpfiles.conf    Trigger-Verzeichnis und Speedtest-Datenverzei
 server/agent.conf.example   Server-Konfiguration (welche Schnittstellen gesendet werden)
 server/install-server.sh    einmalig auf dem Proxmox-Host: Benutzer, Agent, Key-Bindung
 server/diagnose.sh          nur lesend: Fakten über den Server sammeln
+server/audit.sh             nur lesend (als root): Neustart-Festigkeit, Rechte, Key-Bindung, Sandboxing, offene Ports
 server/make-paste-block.sh  erzeugt einen Einfüge-Block für die Server-Einrichtung per Web-Shell
 hooks/homeserver-post-update.sh   stellt den Leisten-Eintrag nach Omarchy-Updates wieder her
 install.sh                  Installation und Migration (idempotent)
