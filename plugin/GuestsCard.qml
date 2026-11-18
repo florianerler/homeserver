@@ -5,12 +5,12 @@ import qs.Commons as Commons
 // Gaeste: VMs und Container mit Status (nur Anzeige).
 Column {
   id: card
-  property var data: ({})
+  property var info: ({})
   property var tr
   property string statusText: ""
   spacing: Style.space(8)
 
-  readonly property bool online: data.ok === true
+  readonly property bool online: info.ok === true
 
   function statusColor(st) {
     return st === "running" ? Commons.Color.accent
@@ -29,8 +29,8 @@ Column {
     visible: card.online
     width: parent.width
     textFormat: Text.PlainText
-    text: card.data.total > 0
-      ? card.tr.t("guests.summary").arg(card.data.running).arg(card.data.total)
+    text: card.info.total > 0
+      ? card.tr.t("guests.summary").arg(card.info.running).arg(card.info.total)
       : card.tr.t("guests.none")
     color: Qt.darker(Commons.Color.foreground, 1.4)
     font.family: Style.font.family
@@ -38,7 +38,7 @@ Column {
   }
 
   Repeater {
-    model: card.online ? card.data.items : []
+    model: card.online ? card.info.items : []
     delegate: Item {
       width: card.width
       height: Math.max(nameText.implicitHeight, Style.space(20))

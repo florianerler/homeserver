@@ -114,10 +114,10 @@ Panel {
     open: root.opened
     focusTarget: panel.loadedContent
     contentWidth: panel.fittedContentWidth(Style.space(360))
-    contentHeight: panel.fittedContentHeight(panel.loadedContentHeight, Style.space(560))
+    contentHeight: panel.fittedContentHeight(panel.loadedContentHeight, Style.space(1000))
 
     content: PanelKeyCatcher {
-      implicitHeight: Math.min(panelColumn.implicitHeight, Style.space(560))
+      implicitHeight: Math.min(panelColumn.implicitHeight, Style.space(1000))
       anchors.fill: parent
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
@@ -223,7 +223,7 @@ Panel {
 
         SystemCard {
           width: parent.width
-          data: root.system
+          info: root.system
           tr: strings
           statusText: root.statusOf(root.system)
         }
@@ -232,7 +232,7 @@ Panel {
 
         GuestsCard {
           width: parent.width
-          data: root.guests
+          info: root.guests
           tr: strings
           statusText: root.statusOf(root.guests)
         }
